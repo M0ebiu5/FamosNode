@@ -1,12 +1,13 @@
 //This is a automatic generated file
 //Please do not modify this file
 //If you touch this file your change will be overwritten during the next build
-//This file has been generated on 2015-02-20 00:05:24
+//This file has been generated on 2015-03-31 00:00:22
 
 #include "Arduino.h"
 #include "enums.h"
 #include <dht11.h>
 #include <eeprom.h>
+#include <TimerOne.h>
 void setup() ;
 void loop() ;
 boolean ReceiveSerial() ;
@@ -22,6 +23,8 @@ void RunModuleCmd() ;
 void RunFan(byte Cmd) ;
 char getRPMS() ;
 void RunDht11(byte Cmd) ;
+void RunDim(byte Cmd) ;
+void DimConfigRamp(bool Down,struct dimmod_s* pDimMod) ;
 void RunAnalogIn(byte Cmd) ;
 void SendMsg(byte ModuleId, byte Slot, boolean bMaster, byte Length, void* Value, boolean LoopbackOnly) ;
 void RecvMsg(bool loopback) ;

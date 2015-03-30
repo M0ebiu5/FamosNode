@@ -23,8 +23,7 @@
 									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/LedStrip2/arduino/variant}&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/LedStrip2/Libraries/DHT11}&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/LedStrip2/Libraries/EEPROM}&quot;"/>
-									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/LedStrip2/Libraries/OneWire}&quot;"/>
-									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/LedStrip2/Libraries/dallas-temperature-control}&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/LedStrip2/Libraries/TimerOne}&quot;"/>
 								</option>
 								<inputType id="it.baeyens.arduino.compiler.cpp.sketch.input.1445701915" name="CPP source files" superClass="it.baeyens.arduino.compiler.cpp.sketch.input"/>
 							</tool>
@@ -34,8 +33,7 @@
 									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/LedStrip2/arduino/variant}&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/LedStrip2/Libraries/DHT11}&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/LedStrip2/Libraries/EEPROM}&quot;"/>
-									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/LedStrip2/Libraries/OneWire}&quot;"/>
-									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/LedStrip2/Libraries/dallas-temperature-control}&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/LedStrip2/Libraries/TimerOne}&quot;"/>
 								</option>
 								<inputType id="it.baeyens.arduino.compiler.c.sketch.input.1758514104" name="C Source Files" superClass="it.baeyens.arduino.compiler.c.sketch.input"/>
 							</tool>
