@@ -1,7 +1,7 @@
 //This is a automatic generated file
 //Please do not modify this file
 //If you touch this file your change will be overwritten during the next build
-//This file has been generated on 2015-03-31 00:00:55
+//This file has been generated on 2015-04-02 20:45:56
 
 #include "Arduino.h"
 #include "enums.h"
@@ -20,11 +20,9 @@ void ReceiveConfigData() ;
 void SendConfigData() ;
 byte* GetDataPtr(byte Type, byte pos, byte* wptr) ;
 void RunModuleCmd() ;
-void RunFan(byte Cmd) ;
-char getRPMS() ;
 void RunDht11(byte Cmd) ;
 void RunDim(byte Cmd) ;
-void DimConfigRamp(bool Down,struct dimmod_s* pDimMod) ;
+void DimConfigRamp(bool Down,byte dimmode, struct dimmod_s* pDimMod) ;
 void RunAnalogIn(byte Cmd) ;
 void SendMsg(byte ModuleId, byte Slot, boolean bMaster, byte Length, void* Value, boolean LoopbackOnly) ;
 void RecvMsg(bool loopback) ;

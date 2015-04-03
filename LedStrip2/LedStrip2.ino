@@ -1,9 +1,9 @@
-//#define __PROG_TYPES_COMPAT__
+#define __PROG_TYPES_COMPAT__
 #define verbose
 
 #define ENABLE_DHT
 #define ENABLE_ANA
-#define ENABLE_FAN
+//#define ENABLE_FAN
 #define ENABLE_DIM
 //#define ENABLE_BUT
 //#define ENABLE_ONE
@@ -157,10 +157,12 @@ TimeUnit OnTimeUnit;
 #endif
 
 #ifdef ENABLE_DIM
+const unsigned int dimTable[] PROGMEM  = {0,1,1,1,1,1,1,1,1,1,1,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,3,3,3,3,3,3,3,3,3,3,4,4,4,4,4,4,4,5,5,5,5,5,5,6,6,6,6,6,7,7,7,7,8,8,8,8,9,9,9,10,10,10,11,11,12,12,12,13,13,14,14,15,15,16,16,17,17,18,19,19,20,21,22,22,23,24,25,26,26,27,28,29,30,31,33,34,35,36,37,39,40,41,43,44,46,48,49,51,53,55,56,58,61,63,65,67,69,72,74,77,80,83,85,88,92,95,98,102,105,109,113,117,121,125,129,134,138,143,148,154,159,165,170,176,182,189,195,202,209,217,224,232,240,249,258,267,276,286,296,306,317,328,339,351,364,376,390,403,417,432,447,463,479,496,513,531,550,569,589,610,631,653,676,700,725,750,776,804,832,861,891,922,955,988,1023};
+
 struct dimmod_s
 {
 modhead_s Head;
-byte Mode : 3;         //0..normal (from PwrLow -> PwrHigh with up and downtime)
+byte Mode : 3;         //0..normal (from PwrLow -> PwrHigh with up and downtime) (discard dim values), 1..normal - store dim values
 byte PowerPin : 5;
 byte PwmPin : 5;
 TimeUnit OnTimeUnit;
@@ -168,21 +170,26 @@ unsigned char PowerLow;        //Power %
 unsigned char PowerHigh;       //Power %
 unsigned int UpTime;		   //tensec
 unsigned int DownTime;		   //tensec
-unsigned int OnTime;   			//time on high power
-unsigned int PwmPeriod;			//pwm Cycle
-unsigned int PVal;				//current power (pwm val max 1023)
-unsigned int TargetPVal;		//target power (pwm val max 1023)
-signed char StepSize;			//step size
+unsigned int OnTime;   			//tensec - time on high power
+unsigned char PwmPeriod;		//pwm Cycle * 100
+unsigned char DimTime;      	//in 10 millis - time btw steps on dimming operation
+unsigned char OffDimTime;      	//in 100 micros - time btw steps on dimming operation for manual off
+unsigned char PVal;				//current power (pwm val max 1023)
 };
 
 #define DIMTYPE 5
 #define DIMSIZE sizeof(dimmod_s)
 #define DIMPLOW sizeof(modhead_s) +  2
 #define DIMPHIG sizeof(modhead_s) +  3
-#define DIMUPT sizeof(modhead_s) +  4
-#define DIMDOWNT sizeof(modhead_s) +  5
-#define DIMONL sizeof(modhead_s) +  6
-#define DIMONH sizeof(modhead_s) +  7
+#define DIMUPTL sizeof(modhead_s) +  4
+#define DIMUPTH sizeof(modhead_s) +  5
+#define DIMDOWNTL sizeof(modhead_s) +  6
+#define DIMDOWNTH sizeof(modhead_s) +  7
+#define DIMONL sizeof(modhead_s) +  8
+#define DIMONH sizeof(modhead_s) +  9
+#define DIMPWM sizeof(modhead_s) +  10
+#define DIMTIME sizeof(modhead_s) +  11
+#define DIMOFFTIME sizeof(modhead_s) +  12
 #endif
 //TODO: 433Mhz, accelerometer, 1-wire
 
@@ -285,6 +292,8 @@ msg_s* pActOutMsg = (msg_s*)&MessageOut[0];
 msg_s* pActInMsg = (msg_s*)&MessageIn[0];
 
 unsigned long ms = 0;
+unsigned int mc = 0;
+unsigned int mcold = 0;
 unsigned int mil = 0;
 unsigned int milold = 0;
 unsigned int calmilold = 0;
@@ -293,6 +302,7 @@ unsigned int tsecold = 0;
 unsigned int hour = 0;
 unsigned int hourold = 0;
 boolean secOverflow = false;
+boolean micOverflow = false;
 boolean milOverflow = false;
 boolean houOverflow = false;
 unsigned int lastinput = 0;
@@ -308,7 +318,7 @@ void setup() {
   Serial.begin(57600);
 //  Serial.begin(115200);
 #if defined(verbose)
-  Serial.println("Starting!!!");
+  Serial.println("Starting???");
 #endif
 
 Register[RegCount++] = MODULESMAX - 1 - DirectRegCount++;			//REG 0: seconds
@@ -320,15 +330,15 @@ byte ptr;
 
 ptr = NewModule(5,DIMTYPE);
 dimmod_s* pActDim = (dimmod_s*)&Module[ptr];
-//(head:         type   ,id,enabled ,follower,hastimer,isfollower, evaluate,startup,timerptr,state),mode ,powerpin ,pwmpin, unit  ,powerlow,powerhigh,uptime,downtime,ontime,pwmperiod
-dimmod_s tmp = {{DIMTYPE,5 ,1       ,0       ,1       ,0         ,1        ,1     ,0       ,0}     ,0    ,8        ,9      ,tensec,0       ,80       ,100   ,100     ,200   ,500};
+//(head:         type   ,id,enabled ,follower,hastimer,isfollower, loopover,startup,timerptr,state),mode ,powerpin ,pwmpin, onunit,powerlow,powerhigh,uptime,downtime,ontime,pwmperiod * 100,dimtime,offdimtime
+dimmod_s tmp = {{DIMTYPE,5 ,1       ,0       ,1       ,0         ,1        ,1     ,0       ,0}     ,0    ,8        ,9      ,tensec,0       ,50       ,50   ,300      ,5000  ,5				,1      ,1};
 *pActDim = tmp;
 RunModule(5,0xff,false);
 
 /*
 ptr = NewModule(2,DHTTYPE);
 dhtmod_s* pActDht = (dhtmod_s*)&Module[ptr];
-//(head:         type   ,id,enabled ,follower,hastimer,isfollower, evaluate,startup,timerptr,state) ,pin ,interv ,hysttmp,tempval,hysthum,humival
+//(head:         type   ,id,enabled ,follower,hastimer,isfollower, loopover,startup,timerptr,state) ,pin ,interv ,hysttmp,tempval,hysthum,humival
 dhtmod_s tmp = {{DHTTYPE,2 ,1       ,0       ,1       ,0         ,1        ,1     ,0       ,0}     ,6   ,15     ,1      ,0      ,1      ,0    };
 *pActDht = tmp;
 RunModule(2,0xff,false);
@@ -341,7 +351,7 @@ Module[Register[RegCount-1]] = 51;											//set Humi Comp Value
 
 ptr = NewModule(1,ANATYPE);
 anamod_s* pActAna = (anamod_s*)&Module[ptr];
-//(head:         type    ,id ,enabled,follower,hastimer,isfollower, evaluate,start,timerptr,state),pin,hyst,calibration,val,pval,interv ,unit
+//(head:         type    ,id ,enabled,follower,hastimer,isfollower, loopover,start,timerptr,state),pin,hyst,calibration,val,pval,interv ,unit
 anamod_s tmpa = {{ANATYPE, 1 ,1      ,0       ,1       ,0         ,0        ,1    ,0       ,0 }   ,0  ,1   ,100        ,0  ,0   ,100    ,tensec };
 *pActAna = tmpa;
 //CreateTimer(0xff,0,tensec,0);
@@ -368,7 +378,7 @@ TimeUnit DelayTimeUnit;
 /*
 ptr = NewModule(3,FANTYPE);
 fanmod_s* pActFan = (fanmod_s*)&Module[ptr];
-//(head:          type   ,id,enabled ,follower,hastimer,isfollower,evaluate, start,timerptr,state) ,mode,powerpin, pwmpin,pwrdyn,pwrlow,pwrhigh,ontime,delaytime,delayunit,onunit,
+//(head:          type   ,id,enabled ,follower,hastimer,isfollower,loopover, start,timerptr,state) ,mode,powerpin, pwmpin,pwrdyn,pwrlow,pwrhigh,ontime,delaytime,delayunit,onunit,
 fanmod_s tmpf = {{FANTYPE,3 ,1       ,0       ,1       ,0         ,0       ,0     ,0       ,0}     ,0   ,7       ,3      ,0     ,20    ,60     ,200   ,50       ,tensec   ,tensec };
 *pActFan = tmpf;
 RunModule(3,0xff,false);
@@ -469,8 +479,12 @@ Link[1].ConditionPtr = 3;
 CountLink++;
 */
 
+CreateTimer(5,200,tensec,1);
+pActTimer->Cmd = 3;
+ReloadTimer(pActTimer);
+
 modpos = 0;
-RunModule(5,2,false);
+RunModule(5,1,false);
 //RunModule(2,0,false);
 //RunModule(1,0,false);
 //RunModule(3,2,false);
@@ -493,23 +507,22 @@ void loop() {
  mil = ms;
  tsec = ms / 100; 
  hour = tsec / 360;
-  
+
   if (mil < milold) {
-//Serial.print("mil: ");
-//Serial.println(mil);
-    milOverflow = true;
-    if (tsec < tsecold) {
-       secOverflow = true;
-       if (hour < hourold)
-          houOverflow = true;
-       else 
-          houOverflow = false;   
-    }
-    else 
-       secOverflow = false;
+	milOverflow = true;
+	if (tsec < tsecold) {
+	   secOverflow = true;
+	   if (hour < hourold)
+		  houOverflow = true;
+	   else
+		  houOverflow = false;
+	}
+	else
+	   secOverflow = false;
    }
- else 
+ else
    milOverflow = false;
+
 
   if ((mil - calmilold) / 1000 > 0)	{  	  	  	  	  	  	  	  	  	  	  	  	  	  	  	  	  	  	  //TicTac handler
 	  Module[Register[0]] = Module[Register[0]] + ((mil - calmilold) / 1000);		//add seconds
@@ -638,11 +651,11 @@ void CheckModuleTimers() {
      if (pActTimer->Mode) {
         if (pActTimer->Wait4Over) {
           if (pActTimer->Unit == milli) {
-             if (milOverflow)
-               pActTimer->Wait4Over = false;
-             else
-               continue;
-          }
+			   if (milOverflow)
+				 pActTimer->Wait4Over = false;
+			   else
+				 continue;
+			}
           if (pActTimer->Unit == tensec) {
              if (milOverflow)
                pActTimer->Wait4Over = false;
@@ -651,7 +664,7 @@ void CheckModuleTimers() {
            }
         }
         
-        if (pActTimer->Unit == milli) 
+        if (pActTimer->Unit == milli)
              comp = ms;
         else if (pActTimer->Unit == tensec)
              comp = tsec;
@@ -741,6 +754,11 @@ void RunModule(byte ModuleId, byte ModuleCmd, bool bTimerCall) {
 #ifdef ENABLE_BUT
 	case BUTTYPE:
 
+		break;
+#endif
+#ifdef ENABLE_DIM
+	case DIMTYPE:
+		RunDim(ModuleCmd);
 		break;
 #endif
 	default:
@@ -1200,19 +1218,19 @@ void RunButton(byte Cmd) {
 //--------------------------------------------------
 //--------------- DIM -----------------------------
 //--------------------------------------------------
-// Cmd:0...timer call; 1...off normal; 2..turn on normal; 3..off immediatly; 4..on immediatly;
-//     5..dim up stop; 7..dim up repeat; 8..dim up down; 9..dim down stop; 10..dim down repeat; 11..dim down up; 0xFF...config
+// Cmd:0...timer call; 1..turn on normal; 2...off normal; 3..off manual (fast dim); 4..off immediatly;
+//     5..dim up start normal; 6..dim up start restart; 7..dim up start up/down; 8..dim down start; 9..dim down start restart; 10..dim down start up/down; 11..dim operation stop; 0xFF...config
 void RunDim(byte Cmd) {
   dimmod_s* pDimMod = (dimmod_s*)pActHead;
+  byte dimmode = 0;
 
   #if defined(verbose)
       Serial.print("Enter rundim:");
       Serial.print(Cmd);
       Serial.print("state:");
       Serial.print(pDimMod->Head.State);
-      Serial.print("timerptr");
-      Serial.println(pDimMod->Head.TimerPtr);
-      getRPMS();
+      Serial.print(" pval:");
+      Serial.println(pDimMod->PVal);
   #endif
 
   if (Cmd == 0xff) {
@@ -1222,7 +1240,11 @@ void RunDim(byte Cmd) {
   	  }
   	  if (pDimMod->PwmPin) {
   		  pinMode(pDimMod->PwmPin, OUTPUT);
-  		  Timer1.initialize(pDimMod->PwmPeriod);
+  		  Timer1.initialize(pDimMod->PwmPeriod * 100);
+  		Serial.print("pwmpin");
+  		Serial.println(pDimMod->PwmPin);
+  		Serial.print("pwmper");
+  		Serial.println(pDimMod->PwmPeriod);
   	  }
 
      if (pDimMod->Head.HasTimer) {
@@ -1239,83 +1261,137 @@ void RunDim(byte Cmd) {
   else				//TODO: send error message?
 	  return;		//dim module requires a timer!
 
-  if (Cmd == 2) {
-	  if (pDimMod->Head.State == 3)		//already on full power?
-		  pDimMod->Head.State = 2;		//just reload timer
-	  else if (pDimMod->Head.State == 0 || pDimMod->Head.State == 4)
-		  pDimMod->Head.State = 0;
+  if (Cmd == 1) {
+  	  dimmode = 0;
+  	  if (pDimMod->Head.State == 3)		//already on full power?
+  		  pDimMod->Head.State = 2;		//just reload timer
+  	  else if (pDimMod->Head.State == 0 || pDimMod->Head.State == 4)
+  		  pDimMod->Head.State = 0;
+    }
+
+  if (Cmd == 2) {					//turn off normal
+    	  pDimMod->Head.State = 3;		//start dimming down
+    	  dimmode = 0;
   }
-  Serial.print(" State: ");
+
+  if (Cmd == 3) {					//turn off fast
+      	  pDimMod->Head.State = 3;		//start dimming down fast
+      	  dimmode = 2;
+    }
+
+  if (Cmd == 5) {
+	  pDimMod->Head.State = 0;		//start dimming up
+	  dimmode = 1;
+  }
+
+  if (Cmd == 8) {
+  	  pDimMod->Head.State = 3;		//start dimming down
+  	  dimmode = 1;
+    }
+
+  if (Cmd == 11) {					//stop dimmin mode
+	  dimmode = 0;
+ 	  pDimMod->Head.State = 2;		//just reload timer
+	  if (pDimMod->Mode == 1)
+		  pDimMod->PowerHigh = pDimMod->PVal;	//store dim value for further use
+  }
+  /*
+  Serial.print(" 1State: ");
    Serial.print(pDimMod->Head.State);
-   Serial.print(" Pval: ");
-   Serial.println(pDimMod->PVal);
+   Serial.print(" 1Pval: ");
+   Serial.print(pDimMod->PVal);
+*/
 
   switch(pDimMod->Head.State)
   {
 	 case 0:
-		 DimConfigRamp(false,pDimMod);
+		 DimConfigRamp(false,dimmode,pDimMod);
 		 pDimMod->Head.State = 1;		//dim up
+		 if (pDimMod->PowerPin)
+		      	 digitalWrite(pDimMod->PowerPin, HIGH);
+		 Timer1.pwm(pDimMod->PwmPin,pDimMod->PVal, pDimMod->PwmPeriod * 100);
 	 case 1:			//dim up
-		 pDimMod->PVal += pDimMod->StepSize;
-		 if (pDimMod->PVal < pDimMod->TargetPVal) {
-//			 Timer1.setPwmDuty(pDimMod->PwmPin,pDimMod->PVal);
+		 pDimMod->PVal++;
+		 itmp = pgm_read_word_near(dimTable + pDimMod->PVal);
+		 Timer1.setPwmDuty(pDimMod->PwmPin,itmp);
+		 if (pDimMod->PVal < pDimMod->PowerHigh) {
 			 ReloadTimer(pActTimer);
 			 break;
 		 }
-		 pDimMod->PVal = pDimMod->TargetPVal;
-		 Timer1.setPwmDuty(pDimMod->PwmPin,pDimMod->PVal);
-		 pActTimer->Mode = 1;
+	 case 2:            //Max power reached
+		 pActTimer->Mode = 2;
 		 pActTimer->Interval = pDimMod->OnTime;
 		 pActTimer->Unit = pDimMod->OnTimeUnit;
-	 case 2:            //Full power
 		 pDimMod->Head.State = 3;
 		 ReloadTimer(pActTimer);
+/*
+		 Serial.print(" TmrIn: ");
+		   Serial.print(pActTimer->Interval);
+		   Serial.print(" Next: ");
+		   Serial.print(pActTimer->NextTimer);
+		   Serial.print(" Over: ");
+		   		 Serial.print(pActTimer->Wait4Over);
+		   Serial.print(" TmrUni: ");
+		   Serial.println(pActTimer->Unit);
+*/
 		 break;
 	 case 3:            //Dim down
-		 DimConfigRamp(true,pDimMod);
+		 DimConfigRamp(true,dimmode,pDimMod);
 		 pDimMod->Head.State = 4;
 	 case 4:            //Dimming
-		 pDimMod->PVal += pDimMod->StepSize;
-		 tmp = (SREG & 0x01);				//check overflow
-		 if (pDimMod->PVal > pDimMod->TargetPVal && tmp == 0) {
-			 Timer1.setPwmDuty(pDimMod->PwmPin,pDimMod->PVal);
+		 if (pDimMod->PVal)
+			 pDimMod->PVal--;
+		 itmp = pgm_read_word_near(dimTable + pDimMod->PVal);
+		 Timer1.setPwmDuty(pDimMod->PwmPin,itmp);
+		 if (pDimMod->PVal > pDimMod->PowerLow) {
 			 ReloadTimer(pActTimer);
+//			 Serial.println("Reload");
 			 break;
 		 }
-		 pDimMod->PVal = pDimMod->TargetPVal;
-		 Timer1.setPwmDuty(pDimMod->PwmPin,pDimMod->PVal);
+		 Timer1.stop();
+		 if (pDimMod->PowerPin)
+			 digitalWrite(pDimMod->PowerPin, LOW);
+
 		 pActTimer->Mode = 0;
 		 pDimMod->Head.State = 0;
 		 break;
   }
-  Serial.print(" State: ");
+  /*
+  Serial.print(" 2State: ");
   Serial.print(pDimMod->Head.State);
-  Serial.print(" Pval: ");
+  Serial.print(" 2Pval: ");
   Serial.println(pDimMod->PVal);
-
+  */
 }
 
-void DimConfigRamp(bool Down,struct dimmod_s* pDimMod) {
-	itmp = pDimMod->PowerHigh * 4 - pDimMod->PowerLow * 4;	//distance
+void DimConfigRamp(bool Down,byte dimmode, struct dimmod_s* pDimMod) {
 
-	pDimMod->StepSize = 0;
-	do {
-	  pDimMod->StepSize++;
-	  if (Down)
-		  ltmp = pDimMod->DownTime * 100;					//to milliseconds
-	  else
-		  ltmp = pDimMod->UpTime * 100;					//to milliseconds
-	  ltmp = (ltmp * pDimMod->StepSize) / itmp;					//step time
-	} while(ltmp < 10);
+	pActTimer->Unit = milli;
+	if (!dimmode) {
+		itmp = pDimMod->PowerHigh - pDimMod->PowerLow;	//distance
+		Serial.print(" Distance: ");
+			  Serial.print(itmp);
+
+		  if (Down)
+			  ltmp = pDimMod->DownTime * 100;		//to milliseconds
+		  else
+			  ltmp = pDimMod->UpTime * 100;			//to milliseconds
+		  ltmp = (ltmp / itmp);					//step time
+	} else {
+		if (dimmode == 2) {
+			ltmp = pDimMod->OffDimTime;	  	       //to milliseconds
+		}
+		else
+			ltmp = pDimMod->DimTime * 10;			//to 10 * millis
+	}
+
+
+	 Serial.print(" Interval: ");
+	  Serial.print(ltmp);
+
 	pActTimer->Mode = 2;
 	pActTimer->Interval = ltmp;
-	pActTimer->Unit = milli;
-	if (Down) {
-		pDimMod->StepSize*=-1;
-		pDimMod->TargetPVal = pDimMod->PowerLow * 4;
-	}
-	else
-		pDimMod->TargetPVal = pDimMod->PowerHigh * 4;
+
 }
 //===================================================
 #endif
@@ -1639,16 +1715,28 @@ void LoadRegister(byte Reg, byte Pos, byte Len, byte* Val) {
 void ReloadTimer(struct timer_s* pTimer) {
 	unsigned int newval;
 
-  if (pTimer->Unit == milli)
-     newval = mil + pTimer->Interval;
-  else if (pTimer->Unit == tensec)
-	  newval = tsec + pTimer->Interval;
-  else
-	  newval = hour + pTimer->Interval;
-  if (newval < pTimer->NextTimer)
-	  pTimer->Wait4Over = true;
+	if (pTimer->Unit == milli) {
+		itmp = ms;
+		newval = itmp + pTimer->Interval;
+	}
+	else if (pTimer->Unit == tensec) {
+		itmp = tsec;
+		newval = itmp + pTimer->Interval;
+	}
+	else {
+		itmp = hour;
+		newval = itmp + pTimer->Interval;
+	}
+	if (newval < itmp)
+		pTimer->Wait4Over = true;
 
-  pTimer->NextTimer = newval;
+	pTimer->NextTimer = newval;
+	/*
+	Serial.print("timerval");
+	Serial.print(newval);
+	Serial.print("waitover");
+	Serial.println(pTimer->Wait4Over);
+	*/
 }
  
 byte GetModuleSize(byte Type) {
