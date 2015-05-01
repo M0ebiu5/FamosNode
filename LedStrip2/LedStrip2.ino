@@ -1,9 +1,10 @@
 #define __PROG_TYPES_COMPAT__
 #define verbose
+#define version 002
 
 #define ENABLE_DHT
 #define ENABLE_ANA
-//#define ENABLE_FAN
+#define ENABLE_FAN
 #define ENABLE_DIM
 //#define ENABLE_BUT
 //#define ENABLE_ONE
@@ -32,7 +33,7 @@ struct timer_s
 {
   byte Type : 5;          //allways 0
   byte ModuleId : 4;
-  TimeUnit Unit;         //milli, tensec, tenhour
+  TimeUnit Unit : 3;         //milli, tensec, tenhour
   byte Mode : 2;         //0..disabled; 1..only once; 2..repeat inf                                         
   byte Wait4Over : 1;    //timer wait 4 overflow
   unsigned int Interval;
@@ -43,6 +44,12 @@ timer_s* pActTimer;
 #define TIMTYPE 0
 #define TIMSIZE sizeof(timer_s)
 
+/*
+bit order from left to right!
+S	O	IF	T	F	E				Id					T
+1	1	0	1	0	1	0	0   | 	0	1	0	0	0	0	1	1
+multi byte values are little endian -> int 23 =  [23|00]
+*/
 struct modhead_s		//3 bytes
 {
   byte Type : 5;        //Module type                                          
@@ -63,11 +70,11 @@ struct cond_s
    Operator Op : 4;  //<; <=; >; >=; <>; !; =; and; or; +; -;
    byte Left : 5;		//register
    byte Right : 5;		//register
-   byte Mode : 4;     //0..just evaluate; 1..evaluate & trigger cmd on true; 2..evaluate on true eval CondPtr; 3..evaluate & trigger cmd on true, on false eval. ConditionPtr; 4..evaluate - on true eval ConditionPtr, on false eval TrgModule (Condition); 5..eval on true trigger and eval; 6..evaluate on true trigger trgmod, on false trigger mod conditionpayload
+   byte Mode : 4;     //0..just evaluate; 1..evaluate & trigger cmd on true; 2..evaluate on true eval CondPtr; 3..evaluate & trigger cmd on true, on false eval. ConditionPtr; 4..evaluate - on true eval ConditionPtr, on false eval TrgModule (Condition); 5..eval on true trigger and eval; 6..evaluate on true trigger trgmod, on false trigger mod conditionptr (conditionpayload)
    byte Invert : 1;   //1..evaluation false = true
    byte ConditionPtr : 5;
    byte ConditionPayload;
-   byte TrgModulePtr;
+   byte TrgModuleId;
    byte TrgCmd;
 };
 
@@ -76,7 +83,7 @@ struct link_s
    byte SrcNode;
    byte SrcModule : 5;
    byte SrcSlot : 3;
-   byte Mode : 3;             //0..store to register Reg; 1..store reg and exec cond;  2..exec cond only;
+   byte Mode : 3;             //0..disabled; 1..store to register Reg; 2..store reg and exec cond;  3..exec cond only; 4..copy value from conditionptr (=register) to reg
    byte Pos : 3;			  //byte position in message
    byte Reg : 5;
    byte Len : 3;
@@ -133,27 +140,29 @@ unsigned int ReArmTime; //time (tensec) to wait for reactivation
 struct fanmod_s
 {
 modhead_s Head;
-byte Mode : 3;         //0..low, 1..high, 2..dynamic rpm / hygro                                          
-byte PowerPin : 5;                            
-byte PwmPin : 5;           
 unsigned char PowerDynamic;    //Power % 
 unsigned char PowerLow;        //Power %                
 unsigned char PowerHigh;       //Power %                 
 unsigned int OnTime;                      
 unsigned int DelayTime;
-TimeUnit DelayTimeUnit;
-TimeUnit OnTimeUnit;
+TimeUnit DelayTimeUnit : 3;
+TimeUnit OnTimeUnit : 3;
+byte Mode : 3;         //0..low, 1..high, 2..dynamic rpm / hygro
+byte PowerPin : 5;
+byte InvertPowerPin : 1;	//if 1 -> turn on = LOW
+byte PwmPin : 5;
+byte Dummy : 4;
 };
                                                                         
 #define FANTYPE 2
 #define FANSIZE sizeof(fanmod_s)
-#define FANPDYN sizeof(modhead_s) +  2
-#define FANPLOW sizeof(modhead_s) +  3
-#define FANPHIG sizeof(modhead_s) +  4
-#define FANOTIML sizeof(modhead_s) +  5
-#define FANOTIMH sizeof(modhead_s) +  6
-#define FANDTIML sizeof(modhead_s) +  7
-#define FANDTIMH sizeof(modhead_s) +  8
+#define FANPDYN sizeof(modhead_s)
+#define FANPLOW sizeof(modhead_s) +  1
+#define FANPHIG sizeof(modhead_s) +  2
+#define FANOTIML sizeof(modhead_s) +  3
+#define FANOTIMH sizeof(modhead_s) +  4
+#define FANDTIML sizeof(modhead_s) +  5
+#define FANDTIMH sizeof(modhead_s) +  6
 #endif
 
 #ifdef ENABLE_DIM
@@ -165,7 +174,8 @@ modhead_s Head;
 byte Mode : 3;         //0..normal (from PwrLow -> PwrHigh with up and downtime) (discard dim values), 1..normal - store dim values
 byte PowerPin : 5;
 byte PwmPin : 5;
-TimeUnit OnTimeUnit;
+byte Dummy : 3;
+TimeUnit OnTimeUnit : 3;
 unsigned char PowerLow;        //Power %
 unsigned char PowerHigh;       //Power %
 unsigned int UpTime;		   //tensec
@@ -200,8 +210,8 @@ modhead_s Head;
 byte DhtPin;      
 byte MeasureInterval;         //seconds   
 byte TempHyst;                //Hysteresis 0.1 degrees                  
+byte HumiHyst;                //Hysteresis 0.1 %
 int TempVal;
-byte HumiHyst;                //Hysteresis 0.1 %           
 unsigned int HumiVal;
 };
                     
@@ -209,46 +219,52 @@ unsigned int HumiVal;
 #define DHTSIZE sizeof(dhtmod_s)
 #define DHTINTE sizeof(modhead_s) +  1
 #define DHTTHYS sizeof(modhead_s) +  2
-#define DHTTVAL sizeof(modhead_s) +  3
-#define DHTHHYS sizeof(modhead_s) +  5
+#define DHTHHYS sizeof(modhead_s) +  3
+#define DHTTVAL sizeof(modhead_s) +  4
 #define DHTHVAL sizeof(modhead_s) +  6
 #endif
 #ifdef ENABLE_ANA
+
 struct anamod_s
 {
   modhead_s Head;
-  byte AnaPin;                
+  byte AnaPin : 3;
+  TimeUnit IntervalUnit;
+  unsigned int MeasureInterval;
   byte Hyst;
   byte Calibration;			//cut off value * 4 for % calculation - eg: calibration val = 110 -> 440 -> 1023 - 440 -> 583 is 100%
   unsigned int Value;
   byte PVal;				//percent value
-  unsigned int MeasureInterval;
-  TimeUnit IntervalUnit;
 };
 #define ANATYPE 4
 #define ANASIZE sizeof(anamod_s)
-#define ANAHYST sizeof(modhead_s) +  1
-#define ANACAL sizeof(modhead_s) +  2
-#define ANAVAL sizeof(modhead_s) +  3
-#define ANAPVAL sizeof(modhead_s) +  4
+#define ANAHYST sizeof(modhead_s) +  3
+#define ANACAL sizeof(modhead_s) +  4
+#define ANAVAL sizeof(modhead_s) +  5
+#define ANAPVAL sizeof(modhead_s) +  6
 #endif
 #ifdef ENABLE_ONE
 struct onemod_s
 {
   modhead_s Head;
-  byte OnePin;
-  byte Hyst;
-  unsigned int aVal[4];
+  byte OnePin : 4;
+  TimeUnit IntervalUnit : 3;
+  byte Dummy : 1;
   unsigned int MeasureInterval;
-  TimeUnit IntervalUnit;
+  byte NodeCount;
+  byte Hyst;
+  int Val[6];
 };
 #define ONETYPE 5
 #define ONESIZE sizeof(onemod_s)
-#define ONEHYST sizeof(modhead_s) +  1
-#define ONEVAL1 sizeof(modhead_s) +  2
-#define ONEVAL2 sizeof(modhead_s) +  3
-#define ONEVAL3 sizeof(modhead_s) +  4
-#define ONEVAL4 sizeof(modhead_s) +  5
+#define ONECOUNT sizeof(modhead_s) +  3
+#define ONEHYST sizeof(modhead_s) +  4
+#define ONEVAL1 sizeof(modhead_s) +  5
+#define ONEVAL2 sizeof(modhead_s) +  7
+#define ONEVAL3 sizeof(modhead_s) +  9
+#define ONEVAL4 sizeof(modhead_s) +  11
+#define ONEVAL5 sizeof(modhead_s) +  13
+#define ONEVAL6 sizeof(modhead_s) +  15
 #endif
 /*
 typedef void (*function) (byte cmd) ;
@@ -314,11 +330,15 @@ unsigned long ltmp = 0;
 void setup() {
   byte modpos;
   Serial.begin(57600);
-  Serial.begin(57600);
-  Serial.begin(57600);
 //  Serial.begin(115200);
 #if defined(verbose)
-  Serial.println("Starting???");
+  Serial.println("Starting...");
+/*
+  Serial.print("size: ");
+  Serial.print(sizeof(test_s));
+  Serial.print("---");
+  Serial.println(sizeof(modhead_s));
+*/
 #endif
 
 Register[RegCount++] = MODULESMAX - 1 - DirectRegCount++;			//REG 0: seconds
@@ -327,69 +347,81 @@ Register[RegCount++] = MODULESMAX - 1 - DirectRegCount++;			//REG 2: hours
 Register[RegCount++] = MODULESMAX - 1 - DirectRegCount++;			//REG 3: weekday: 1..monday...7..sunday
 
 byte ptr;
-
+/*
 ptr = NewModule(5,DIMTYPE);
 dimmod_s* pActDim = (dimmod_s*)&Module[ptr];
-//(head:         type   ,id,enabled ,follower,hastimer,isfollower, loopover,startup,timerptr,state),mode ,powerpin ,pwmpin, onunit,powerlow,powerhigh,uptime,downtime,ontime,pwmperiod * 100,dimtime,offdimtime
-dimmod_s tmp = {{DIMTYPE,5 ,1       ,0       ,1       ,0         ,1        ,1     ,0       ,0}     ,0    ,8        ,9      ,tensec,0       ,50       ,50   ,300      ,5000  ,5				,1      ,1};
+//(head:         type   ,id,enabled ,follower,hastimer,isfollower, loopover,startup,timerptr,state),mode ,powerpin ,pwmpin,dummy, onunit,powerlow,powerhigh,uptime,downtime,ontime,pwmperiod * 100,dimtime,offdimtime
+dimmod_s tmp = {{DIMTYPE,5 ,1       ,0       ,1       ,0         ,1        ,1     ,0       ,0}     ,0    ,8        ,9     ,0    ,tensec ,0       ,50       ,50   ,300      ,5000  ,5				,1      ,1};
 *pActDim = tmp;
 RunModule(5,0xff,false);
+*/
 
-/*
 ptr = NewModule(2,DHTTYPE);
 dhtmod_s* pActDht = (dhtmod_s*)&Module[ptr];
-//(head:         type   ,id,enabled ,follower,hastimer,isfollower, loopover,startup,timerptr,state) ,pin ,interv ,hysttmp,tempval,hysthum,humival
-dhtmod_s tmp = {{DHTTYPE,2 ,1       ,0       ,1       ,0         ,1        ,1     ,0       ,0}     ,6   ,15     ,1      ,0      ,1      ,0    };
+//(head:         type   ,id,enabled ,follower,hastimer,isfollower, loopover,startup,timerptr,state) ,pin ,interv ,hysttmp,hysthum,tempval,humival
+dhtmod_s tmp = {{DHTTYPE,2 ,1       ,0       ,1       ,0         ,1        ,1     ,0       ,0}     ,6   ,15     ,1       ,1      ,0      ,0    };
 *pActDht = tmp;
 RunModule(2,0xff,false);
 Register[RegCount++] = ptr + DHTHVAL;								//REG 4: Humi value
 Register[RegCount++] = MODULESMAX - 1 - DirectRegCount++;			//REG 5: Free Register 1 store Humi comparison value high
-Module[Register[RegCount-1]] = 60;											//set Humi Comp Value
+Module[Register[RegCount-1]] = 51;									//set Humi Comp Value
 Register[RegCount++] = MODULESMAX - 1 - DirectRegCount++;			//REG 6: Free Register 1 store Humi comparison value low
-Module[Register[RegCount-1]] = 51;											//set Humi Comp Value
+Module[Register[RegCount-1]] = 47;									//set Humi Comp Value
 
+/*
+modhead_s Head;
+byte AnaPin : 3;
+TimeUnit IntervalUnit;
+unsigned int MeasureInterval;
+byte Hyst;
+byte Calibration;			//cut off value * 4 for % calculation - eg: calibration val = 110 -> 440 -> 1023 - 440 -> 583 is 100%
+unsigned int Value;
+byte PVal;				//percent value
+*/
 
 ptr = NewModule(1,ANATYPE);
 anamod_s* pActAna = (anamod_s*)&Module[ptr];
-//(head:         type    ,id ,enabled,follower,hastimer,isfollower, loopover,start,timerptr,state),pin,hyst,calibration,val,pval,interv ,unit
-anamod_s tmpa = {{ANATYPE, 1 ,1      ,0       ,1       ,0         ,0        ,1    ,0       ,0 }   ,0  ,1   ,100        ,0  ,0   ,100    ,tensec };
+//(head:         type    ,id ,enabled,follower,hastimer,isfollower, loopover,start,timerptr,state),pin,int.unit,interv,hyst,calibration,val,pval
+anamod_s tmpa = {{ANATYPE, 1 ,1      ,0       ,1       ,0         ,0        ,1    ,0       ,0 }   ,0  ,tensec  ,150   ,1   ,100        ,0  ,0        };
 *pActAna = tmpa;
 //CreateTimer(0xff,0,tensec,0);
 RunModule(1,0xff,false);
 Register[RegCount++] = ptr + ANAPVAL;		//REG 7: Ambi % value
-Register[RegCount++] = MODULESMAX - 1 - DirectRegCount++;			//REG 4: Free Register 2 store Ambi comparison value
+Register[RegCount++] = MODULESMAX - 1 - DirectRegCount++;			//REG 8: Free Register 2 store Ambi comparison value
 Module[Register[RegCount-1]] = 10;										//set Ambi Comp Value
 //Register[RegCount++] = MODULESMAX - 1 - DirectRegCount++;
-*/
 
 /*
-byte Mode : 3;         //0..low, 1..high, 2..dynamic rpm / hygro
-byte PowerPin : 5;
-byte PwmPin : 5;
+modhead_s Head;
 unsigned char PowerDynamic;    //Power %
 unsigned char PowerLow;        //Power %
 unsigned char PowerHigh;       //Power %
 unsigned int OnTime;
-TimeUnit OnTimeUnit;
 unsigned int DelayTime;
 TimeUnit DelayTimeUnit;
+TimeUnit OnTimeUnit;
+byte Mode : 3;         //0..low, 1..high, 2..dynamic rpm / hygro
+byte PowerPin : 5;
+byte InvertPowerPin : 1;	//if 1 -> turn on = LOW
+byte PwmPin : 5;
+byte Dummy : 4;
 };
  */
-/*
+
 ptr = NewModule(3,FANTYPE);
 fanmod_s* pActFan = (fanmod_s*)&Module[ptr];
-//(head:          type   ,id,enabled ,follower,hastimer,isfollower,loopover, start,timerptr,state) ,mode,powerpin, pwmpin,pwrdyn,pwrlow,pwrhigh,ontime,delaytime,delayunit,onunit,
-fanmod_s tmpf = {{FANTYPE,3 ,1       ,0       ,1       ,0         ,0       ,0     ,0       ,0}     ,0   ,7       ,3      ,0     ,20    ,60     ,200   ,50       ,tensec   ,tensec };
+//(head:          type   ,id,enabled ,follower,hastimer,isfollower,loopover, start,timerptr,state) ,pwrdyn,pwrlow,pwrhigh,ontime,delaytime,delayunit,onunit,mode,powerpin,invertpower,pwmpin,dummy
+fanmod_s tmpf = {{FANTYPE,3 ,1       ,0       ,1       ,0         ,0       ,0     ,0       ,0}     ,0     ,20    ,90     ,200   ,200      ,tensec   ,tensec,0   ,7       ,0          ,3 };
 *pActFan = tmpf;
 RunModule(3,0xff,false);
 Register[RegCount++] = ptr + FANPDYN;								//REG 5: Humi value
-*/
+
 
 /*
 Operator Op : 4;  //<; <=; >; >=; <>; !; =; and; or; +; -;
    byte Left : 5;		//register
    byte Right : 5;		//register
-   byte Mode : 4;     //0..just evaluate; 1..evaluate & trigger cmd on true; 2..evaluate on true eval CondPtr; 3..evaluate & trigger cmd on true, on false eval. ConditionPtr; 4..evaluate - on true eval ConditionPtr, on false eval TrgModule (Condition); 5..on true trigger and eval; 6..on true trigger trgmod, on false trigger mod conditionpayload
+   byte Mode : 4;     //0..just evaluate; 1..evaluate & trigger cmd on true; 2..evaluate on true eval CondPtr; 3..evaluate & trigger cmd on true, on false eval. ConditionPtr; 4..evaluate - on true eval ConditionPtr, on false eval TrgModule (Condition); 5..on true trigger and eval; 6..on true trigger trgmod, on false trigger conditionptr (conditionpayload)
    byte Store : 1;	  //1..store result
    byte Invert : 1;   //1..evaluation false = true
    byte ConditionPtr : 5;
@@ -397,14 +429,15 @@ Operator Op : 4;  //<; <=; >; >=; <>; !; =; and; or; +; -;
    byte TrgCmd;
 */
 // Check humi value high
-Condition[0].Op = op_greater;
-Condition[0].Left = 4;
-Condition[0].Right = 5;
-Condition[0].Mode = 0;
-Condition[0].Invert = 0;
-Condition[0].ConditionPtr = 2;
-Condition[0].TrgModulePtr = 1;
-Condition[0].TrgCmd = 0;
+Condition[CountCond].Op = op_greater;
+Condition[CountCond].Left = 4;
+Condition[CountCond].Right = 5;
+Condition[CountCond].Mode = 4;
+Condition[CountCond].Invert = 0;
+Condition[CountCond].ConditionPtr = 2;
+Condition[CountCond].TrgModuleId = 1;
+Condition[CountCond].TrgCmd = 4;
+CountCond++;
 
 // Check humi value low
 Condition[1].Op = op_greater;
@@ -413,31 +446,34 @@ Condition[1].Right = 6;
 Condition[1].Mode = 1;
 Condition[1].Invert = 0;
 Condition[1].ConditionPtr = 0;
-Condition[1].TrgModulePtr = 3;
-Condition[1].TrgCmd = 6;
+Condition[1].TrgModuleId = 3;
+Condition[1].TrgCmd = 2;
+CountCond++;
 
 // Check ambi value
-//ambi val < reg4 -> run fan high else low
+//ambi val < reg4 (=dark) -> run fan high else low
 Condition[2].Op = op_greater;
 Condition[2].Left = 8;
 Condition[2].Right = 7;
 Condition[2].Mode = 6;
 Condition[2].Invert = 0;
-Condition[2].ConditionPayload = 3;
-Condition[2].ConditionPtr = 2;							  //low cmd for fanmod
-Condition[2].TrgModulePtr = 3;
-Condition[2].TrgCmd = 3;
+Condition[2].ConditionPtr = 3;
+Condition[2].ConditionPayload = 2;			//low
+Condition[2].TrgModuleId = 3;
+Condition[2].TrgCmd = 3;					//high with delay
+CountCond++;
 
 // Check ambi value
-//ambi val > reg4 -> reduce high speed
+//ambi val > reg4 (bright) -> reduce high speed
 Condition[3].Op = op_greater;
 Condition[3].Left = 7;
 Condition[3].Right = 8;
 Condition[3].Mode = 1;
 Condition[3].Invert = 0;
 Condition[3].ConditionPtr = 0;
-Condition[3].TrgModulePtr = 3;
+Condition[3].TrgModuleId = 3;
 Condition[3].TrgCmd = 5;								//reduce from high
+CountCond++;
 
 //Hygro over
 //			   operator, ,left,right,result,mode,store,invert,condptr,trgmod,trgcmd
@@ -450,7 +486,7 @@ struct link_s
    byte SrcNode;
    byte SrcModule : 5;
    byte SrcSlot : 3;
-   byte Mode : 3;             //0..store to register Reg; 1..store reg and exec cond;  2..exec cond only;
+   byte Mode : 3;                          //0..disabled; 1..store to register Reg; 2..store reg and exec cond;  3..exec cond only; 4..copy value from conditionptr (=register) to reg
    byte Pos : 3;			  //byte position in message
    byte Reg : 5;
    byte Len : 3;
@@ -458,35 +494,39 @@ struct link_s
 };
 */
 
+
 Link[0].SrcNode = NodeId;
 Link[0].SrcModule = 2;
 Link[0].SrcSlot = 1;
-Link[0].Mode = 1;			//store and eval
+Link[0].Mode = 3;			//eval only
 Link[0].Pos = 0;
 Link[0].Reg = 5;			//store humi to fan dynamic power val
 Link[0].Len = 1;
 Link[0].ConditionPtr = 0;
 CountLink++;
 
-/*
+
+
 Link[1].SrcNode = NodeId;
 Link[1].SrcModule = 1;
 Link[1].SrcSlot = 0;
-Link[1].Mode = 2;
+Link[1].Mode = 3;
 Link[1].Pos = 0;
 Link[1].Reg = 0;
 Link[1].ConditionPtr = 3;
 CountLink++;
-*/
 
+
+/*
 CreateTimer(5,200,tensec,1);
 pActTimer->Cmd = 3;
 ReloadTimer(pActTimer);
+*/
 
 modpos = 0;
-RunModule(5,1,false);
-//RunModule(2,0,false);
-//RunModule(1,0,false);
+//RunModule(5,1,false);
+RunModule(2,0,false);
+RunModule(1,0,false);
 //RunModule(3,2,false);
 //ReadConfigEE();
 //SaveConfigEE();
@@ -551,7 +591,7 @@ void loop() {
   }
 
   if (msginread != msginwrite) {
-	  Serial.println("msg");
+//	  Serial.println("msg");
 	  pActInMsg = (msg_s*)&MessageIn[msginread];
 	  RecvMsg(false);
 		if (msginread + MessageIn[msginread] < INMAX - sizeof(msg_s))
@@ -570,6 +610,10 @@ Serial.println(msginwrite);
   hourold = hour;
 }
 
+//receive msg
+//:lddddd
+//msg starts with : followed by length and data
+
 boolean ReceiveSerial() {
 
 	if (mil - lastinput > SERIAL_TIMEOUT)
@@ -579,7 +623,7 @@ boolean ReceiveSerial() {
 	lastinput = mil;
 
 	char rec = (char)Serial.read();
-	Serial.println(rec);
+//	Serial.println(rec);
 	if (msginstate == 0) {
 		if (rec == ':')
 			msginstate = 1;
@@ -605,8 +649,8 @@ boolean ReceiveSerial() {
 					msginwrite = 0;
 				if (msginwrite == msginread)
 					SendMsg(0,0,1,0,&rec,false);		//send overflow error: Module 0, Slot 0
-				Serial.print("state: ");
-				Serial.println(msginstate);
+//				Serial.print("state: ");
+//				Serial.println(msginstate);
 				msginstate = 0;
 				return true;							//msg complete!
 //				msginstate = 0xfe;
@@ -621,10 +665,12 @@ boolean ReceiveSerial() {
 			}
 		}
 	}
+	/*
 	Serial.print("len: ");
 	Serial.println(pActInMsg->p.Length);
 	Serial.print("state: ");
 	Serial.println(msginstate);
+	*/
 	return false;
 }
 
@@ -796,14 +842,70 @@ void SyncTime() {
 
 }
 
+
+//--------------------------------------------------
+//--------------- New Config Data -----------------------------
+//create new data object from msg
+//Slot: 0..modules; 1..timer; 2..link; 3..condition; 4..register; 5..direct register;
+//Module: pay0: -> module id; pay1: -> module type
+//Timer: pay0: -> module id; 1: intervall; 2: unit; 3: mode
+
+void NewConfigData() {
+	byte type = pActInMsg->p.SrcSlot;
+
+	switch(type)
+	  {
+		 case 0:
+			 NewModule(pActInMsg->p.aPay[0],pActInMsg->p.aPay[1]);
+			 break;
+		 case 1:
+			 CreateTimer(pActInMsg->p.aPay[0],pActInMsg->p.aPay[1],(TimeUnit)pActInMsg->p.aPay[2],pActInMsg->p.aPay[3]);
+			 break;
+		 case 2:
+			 if (pActInMsg->p.Length < 8)
+				 break;
+			 Link[CountLink].SrcNode = pActInMsg->p.aPay[0];
+			 Link[CountLink].SrcModule = pActInMsg->p.aPay[1];
+			 Link[CountLink].SrcSlot = pActInMsg->p.aPay[2];
+			 Link[CountLink].Mode = pActInMsg->p.aPay[3];
+			 Link[CountLink].Pos = pActInMsg->p.aPay[4];
+			 Link[CountLink].Reg = pActInMsg->p.aPay[5];
+			 Link[CountLink].Len = pActInMsg->p.aPay[6];
+			 Link[CountLink].ConditionPtr = pActInMsg->p.aPay[7];
+			 CountLink++;
+			 break;
+		 case 3:
+			 if (pActInMsg->p.Length < 8)
+			 	break;
+			 Condition[CountCond].Op = pActInMsg->p.aPay[0];
+			 Condition[CountCond].Left = pActInMsg->p.aPay[1];
+			 Condition[CountCond].Right = pActInMsg->p.aPay[2];
+			 Condition[CountCond].Mode = pActInMsg->p.aPay[3];
+			 Condition[CountCond].Invert = pActInMsg->p.aPay[4];
+			 Condition[CountCond].ConditionPtr = pActInMsg->p.aPay[5];
+			 Condition[CountCond].TrgModuleId = pActInMsg->p.aPay[6];
+			 Condition[CountCond].TrgCmd = pActInMsg->p.aPay[7];
+			 CountCond++;
+			 break;
+		 case 4:
+			 Register[RegCount++] = pActInMsg->p.aPay[0];
+		 	 break;
+		 case 5:
+			 Register[RegCount++] = MODULESMAX - 1 - DirectRegCount++;
+			 Module[Register[RegCount-1]] = pActInMsg->p.aPay[0];
+		 	 break;
+	  }
+
+}
+
 //--------------------------------------------------
 //--------------- Receive Config Data -----------------------------
-//load data from msg into module array
+//load data from msg into node storage
 //Slot: 0..modules; 1..timer; 2..link; 3..condition; 4..register; 5..direct register; 6..eeprom
-//pay0: -> modules: load address - 0xff..load at writeptr / others: item index
+//pay0: -> 0xff..load at writeptr / other: item index
 //pay1: -> high byte address eeprom  / others: offset count from start
 
-void ReceiveConfigData() {
+void ChangeConfigData() {
 	byte type = pActInMsg->p.SrcSlot;
 	byte wptr;
 	byte* dataptr = 0;
@@ -842,7 +944,16 @@ void SendConfigData() {
 	byte rptr = 0;
 	byte* dataptr = 0;
 
+#ifdef verbose
 	Serial.println("Sendconfigdata");
+	Serial.print(type);
+	Serial.print("---");
+	Serial.print(pActInMsg->p.aPay[0]);
+	Serial.print("---");
+	Serial.print(pActInMsg->p.aPay[1]);
+	Serial.print("---");
+	Serial.print(pActInMsg->p.aPay[2]);
+#endif
 
 	pActOutMsg->p.SrcModule = 0;
 	if (type < 6) {
@@ -854,14 +965,21 @@ void SendConfigData() {
 		itmp = pActInMsg->p.aPay[1];
 		itmp = itmp << 8;
 		itmp = pActInMsg->p.aPay[0];
-		rptr = 0;
-		for (itmp; itmp < itmp + pActInMsg->p.Length - 2; itmp++) {
-			pActOutMsg->p.aPay[rptr++] = EEPROM.read(itmp);
-			Serial.print(rptr-1);
+		Serial.print("itmp");
+		Serial.println(itmp);
+		for (rptr = 0; rptr < pActInMsg->p.aPay[2]; rptr++) {
+			pActOutMsg->p.aPay[rptr] = EEPROM.read(itmp++);
+			/*
+			Serial.print(rptr);
 			Serial.print("---");
-			Serial.println(pActOutMsg->p.aPay[rptr-1]);
+			Serial.print(itmp);
+			Serial.print("---");
+			Serial.println(pActOutMsg->p.aPay[rptr]);
+			*/
+			if (rptr > 7)
+				break;
 		}
-		SendMsg(0,4,true,rptr,&pActOutMsg->p.aPay[0],false);
+		SendMsg(0,4,true,rptr+1,&pActOutMsg->p.aPay[0],false);
 	}
 }
 
@@ -869,9 +987,10 @@ byte* GetDataPtr(byte Type, byte pos, byte* wptr) {
 	if (Type == 0) {
 		if (pos == 0xff)
 			*wptr = ModuleWritePtr;
-		else
+		else {
 			*wptr = pos;
-		return &Module[0];
+		}
+		return &Module[ModId[pos]];		//get start adr of module by id
 	}
 	else if (Type == 1) {
 		return (byte*)&Timer[pos];
@@ -926,7 +1045,10 @@ void RunFan(byte Cmd) {
   if (Cmd == 0xff) {
 	 if (pFanMod->PowerPin) {
 		 pinMode(pFanMod->PowerPin, OUTPUT);
-		 digitalWrite(pFanMod->PowerPin, LOW);
+		 if (pFanMod->InvertPowerPin)
+			 digitalWrite(pFanMod->PowerPin, HIGH);
+		 else
+			 digitalWrite(pFanMod->PowerPin, LOW);
 	 }
 	 if (pFanMod->PwmPin) {
 		 pinMode(pFanMod->PwmPin, OUTPUT);
@@ -973,6 +1095,8 @@ void RunFan(byte Cmd) {
   else if (Cmd == 5) {					//all, but high
 	  if (pFanMod->Mode > 0)
 		  pFanMod->Mode = 0;
+	  else
+		  return;
 	  if (pFanMod->Head.State == 3)
 		  pFanMod->Head.State = 2;
 	  else
@@ -981,6 +1105,8 @@ void RunFan(byte Cmd) {
   
   if (pFanMod->Head.HasTimer) {
   	  pActTimer = &Timer[pFanMod->Head.TimerPtr];
+  	  Serial.print("nxtime");
+  	  Serial.println(pActTimer->NextTimer);
   }
 
   switch(pFanMod->Head.State)
@@ -998,9 +1124,11 @@ void RunFan(byte Cmd) {
 	 case 1:			//delay
 		if (Cmd != 0) 	//not from timer - keep waiting
 			return;
-		break;
 	 case 2:            //Turn on
-	   digitalWrite(pFanMod->PowerPin, HIGH);
+		 if (pFanMod->InvertPowerPin)
+			 digitalWrite(pFanMod->PowerPin, LOW);
+		 else
+			 digitalWrite(pFanMod->PowerPin, HIGH);
 	   if (pFanMod->Mode == 0)
 		 PowerVal = pFanMod->PowerLow;
 	   if (pFanMod->Mode == 1)
@@ -1021,7 +1149,10 @@ void RunFan(byte Cmd) {
 	 case 3:            //Turn off
 		 OCR2B = 0;
 		 pFanMod->Head.State = 0;
-		 digitalWrite(pFanMod->PowerPin, LOW);
+		 if (pFanMod->InvertPowerPin)
+			 digitalWrite(pFanMod->PowerPin, HIGH);
+		 else
+			 digitalWrite(pFanMod->PowerPin, LOW);
 		 SendMsg(pActHead->Id,1,false,1,&PowerVal,pFanMod->Head.LoopbackOverride);
 		 if (pFanMod->Head.HasTimer) {
 			 pActTimer->Mode = 0;
@@ -1052,8 +1183,8 @@ void RunDht11(byte Cmd) {
   dhtmod_s* pDhtMod = (dhtmod_s*)pActHead;
   
  #if defined(verbose)  
-      Serial.print("Enter rundht11: ");
-      Serial.println(Cmd);
+//      Serial.print("Enter rundht11: ");
+//      Serial.println(Cmd);
  #endif
   
  if (Cmd == 0xff) {
@@ -1078,13 +1209,13 @@ void RunDht11(byte Cmd) {
 	  }
 	  ReloadTimer(pActTimer);
   }
-  Serial.print("int init: ");
-  Serial.println(pActTimer->Interval);
+//  Serial.print("int init: ");
+//  Serial.println(pActTimer->Interval);
   
   int chk = DHT11.read(pDhtMod->DhtPin);
-  Serial.print("chk: ");
-  Serial.println(chk);
-#if defined(verbose)  
+#if defined(verbose)
+  //  Serial.print("chk: ");
+  //  Serial.println(chk);
   switch (chk)
   {
     case DHTLIB_ERROR_CHECKSUM: 
@@ -1095,9 +1226,9 @@ void RunDht11(byte Cmd) {
 		break;
     case DHTLIB_OK:
 //		Serial.println("OK");
-    	Serial.print("Humidity(%): ");
-		Serial.println((float)DHT11.humidity, 2);
-		Serial.print("Temperature(C): ");
+    	Serial.print("H(%): ");
+		Serial.print((float)DHT11.humidity, 2);
+		Serial.print(" T(C): ");
 		Serial.println((float)DHT11.temperature, 2);
 		break;
     default: 
@@ -1385,9 +1516,8 @@ void DimConfigRamp(bool Down,byte dimmode, struct dimmod_s* pDimMod) {
 			ltmp = pDimMod->DimTime * 10;			//to 10 * millis
 	}
 
-
-	 Serial.print(" Interval: ");
-	  Serial.print(ltmp);
+  Serial.print(" Interval: ");
+  Serial.print(ltmp);
 
 	pActTimer->Mode = 2;
 	pActTimer->Interval = ltmp;
@@ -1484,7 +1614,7 @@ void RunAnalogIn(byte Cmd) {
 void SendMsg(byte ModuleId, byte Slot, boolean bMaster, byte Length, void* Value, boolean LoopbackOnly)
 {
 #if defined(verbose)
-	Serial.println("Enter Sendmsg:");
+//	Serial.println("Enter Sendmsg:");
 #endif
 
   /*
@@ -1496,7 +1626,7 @@ void SendMsg(byte ModuleId, byte Slot, boolean bMaster, byte Length, void* Value
   pActOutMsg->p.SrcNode = NodeId;
   pActOutMsg->p.SrcModule = ModuleId;
   pActOutMsg->p.SrcSlot = Slot;
-  pActOutMsg->p.Length = Length + 3;
+  pActOutMsg->p.Length = Length + 4;
   if (Value != &pActOutMsg->p.aPay[0]) {				//msg payload already filled?
 //	  Serial.println("copy");
 	  for (byte j=0; j < Length; j++) {
@@ -1504,7 +1634,7 @@ void SendMsg(byte ModuleId, byte Slot, boolean bMaster, byte Length, void* Value
 //		Serial.println(((byte *)Value)[j]);
 	  }
   }
-
+/*
 #if defined(verbose)
 Serial.print(" id: ");
 Serial.print(pActOutMsg->p.SrcNode);
@@ -1532,8 +1662,9 @@ Serial.print(pActOutMsg->p.aPay[6]);
 Serial.print("-");
 Serial.println(pActOutMsg->p.aPay[7]);
 #endif
+*/
 
-  msgoutwrite+=(Length+3);
+  msgoutwrite+=(Length+4);
   if (msgoutwrite + MSGSIZE >= OUTMAX) {
 	  msgoutwrite = 0;
 	  pActOutMsg = (msg_s*)&MessageOut[msgoutwrite];
@@ -1551,6 +1682,7 @@ void RecvMsg(bool loopback)
     if (loopback)
       pActInMsg = pActOutMsg;
 #ifdef verbose
+    /*
 	Serial.println("Enter Recv");
 	   Serial.print("srcnode");
 	   Serial.print(pActInMsg->p.SrcNode);
@@ -1558,10 +1690,11 @@ void RecvMsg(bool loopback)
 	  Serial.print(pActInMsg->p.SrcModule);
 	  Serial.print(" srcSlot: ");
 	  Serial.println(pActInMsg->p.SrcSlot);
+	  */
 #endif
     if (pActInMsg->p.SrcNode == 0) {		//master message
     	if (pActInMsg->p.SrcModule == 1) {			//Receive config
-    		ReceiveConfigData();
+    		ChangeConfigData();
     	}
     	else if (pActInMsg->p.SrcModule == 2) {		//Send config
     		SendConfigData();
@@ -1578,8 +1711,10 @@ void RecvMsg(bool loopback)
     	else if (pActInMsg->p.SrcModule == 6) {		//Load config
 			LoadConfigEE();
 		}
-    	else if (pActInMsg->p.SrcModule == 7) {		//Load config
+    	else if (pActInMsg->p.SrcModule == 7) {		//Send node data - version TODO: add modules, etc
 			Serial.println("TEST!");
+			tmp = version;
+			SendMsg(0,7,false,1,&tmp,false);
 		}
     } else {                                         
        for (byte j = 0; j < CountLink; j++) {
@@ -1678,13 +1813,13 @@ Serial.println(Module[Register[Condition[Cond].Right]]);
 	if (Condition[Cond].Invert && !NumericOp)
 			result = !result;
 
-	if (Condition[Cond].Mode == 6 || Condition[Cond].Mode == 7)
-		Register[Condition[Cond].TrgModulePtr] = result;
+	if (Condition[Cond].Mode == 7)
+		Register[Condition[Cond].TrgModuleId] = result;
 
 	//0..just evaluate; 1..trigger cmd on true; 2..on true eval CondPtr; 3..trigger cmd on true, on false eval. ConditionPtr; 4..on true eval ConditionPtr, on false eval TrgModule (Condition); 5..on true trigger and eval; 6..on true trigger trgmod, on false trigger mod conditionpayload
 	if (result) {
 		if (Condition[Cond].Mode == 1 || Condition[Cond].Mode == 3 || Condition[Cond].Mode == 5 || Condition[Cond].Mode == 6) {
-			RunModule(Condition[Cond].TrgModulePtr, Condition[Cond].TrgCmd, false);
+			RunModule(Condition[Cond].TrgModuleId, Condition[Cond].TrgCmd, false);
 		}
 		if (Condition[Cond].Mode == 2 || Condition[Cond].Mode == 4 || Condition[Cond].Mode == 5) {
 			Evaluate(Condition[Cond].ConditionPtr);
@@ -1695,10 +1830,10 @@ Serial.println(Module[Register[Condition[Cond].Right]]);
 			Evaluate(Condition[Cond].ConditionPtr);
 		}
 		else if (Condition[Cond].Mode == 4) {
-			Evaluate(Condition[Cond].TrgModulePtr);
+			Evaluate(Condition[Cond].TrgModuleId);
 		}
 		else if (Condition[Cond].Mode == 6) {
-			RunModule(Condition[Cond].ConditionPayload, Condition[Cond].ConditionPtr, false);
+			RunModule(Condition[Cond].ConditionPtr, Condition[Cond].ConditionPayload, false);
 		}
 	}
 }
@@ -1782,6 +1917,8 @@ void TimeSync() {
 }
 
 //write config data to eeprom
+//structure:   lmmmmmmmlddddddddlrrrrrrrrrlkkkkkkkkkk
+//l: length m: module bytes; d dirct registers
 void SaveConfigEE() {
 	unsigned int pos = 0;
 	byte* ptr;

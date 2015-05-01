@@ -1,7 +1,7 @@
 //This is a automatic generated file
 //Please do not modify this file
 //If you touch this file your change will be overwritten during the next build
-//This file has been generated on 2015-04-02 20:45:56
+//This file has been generated on 2015-05-02 01:43:11
 
 #include "Arduino.h"
 #include "enums.h"
@@ -16,10 +16,13 @@ byte NewModule(byte Id, byte Type) ;
 void RunModule(byte ModuleId, byte ModuleCmd, bool bTimerCall) ;
 void CreateTimer(byte ModuleId, int Interval, TimeUnit tu, byte Mode) ;
 void SyncTime() ;
-void ReceiveConfigData() ;
+void NewConfigData() ;
+void ChangeConfigData() ;
 void SendConfigData() ;
 byte* GetDataPtr(byte Type, byte pos, byte* wptr) ;
 void RunModuleCmd() ;
+void RunFan(byte Cmd) ;
+char getRPMS() ;
 void RunDht11(byte Cmd) ;
 void RunDim(byte Cmd) ;
 void DimConfigRamp(bool Down,byte dimmode, struct dimmod_s* pDimMod) ;
