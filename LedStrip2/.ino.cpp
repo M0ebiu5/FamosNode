@@ -1,7 +1,7 @@
 //This is a automatic generated file
 //Please do not modify this file
 //If you touch this file your change will be overwritten during the next build
-//This file has been generated on 2015-05-02 01:43:11
+//This file has been generated on 2015-05-03 01:35:27
 
 #include "Arduino.h"
 #include "enums.h"
@@ -27,7 +27,7 @@ void RunDht11(byte Cmd) ;
 void RunDim(byte Cmd) ;
 void DimConfigRamp(bool Down,byte dimmode, struct dimmod_s* pDimMod) ;
 void RunAnalogIn(byte Cmd) ;
-void SendMsg(byte ModuleId, byte Slot, boolean bMaster, byte Length, void* Value, boolean LoopbackOnly) ;
+void SendMsg(byte ModuleId, byte Slot, boolean bMaster, byte Length, void* Value, byte LoopbackMode) ;
 void RecvMsg(bool loopback) ;
 void Evaluate(byte Cond) ;
 void LoadRegister(byte Reg, byte Pos, byte Len, byte* Val) ;

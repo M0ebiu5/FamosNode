@@ -1,3 +1,12 @@
+/*
+ * eeprom structure
+ * 0....1021 		module config data (1 byte len -> cfg array (eg modules))
+ * 1021				start from eeprom
+ * 1022				log level (0-3)
+ * 1023				node id (1-255)
+ */
+#define DATAPARTITIONSIZE 1010		//module config space vs node config space
+
 #define __PROG_TYPES_COMPAT__
 #define verbose
 #define version 002
@@ -46,7 +55,7 @@ timer_s* pActTimer;
 
 /*
 bit order from left to right!
-S	O	IF	T	F	E				Id					T
+S	HO	IF	T	F	E						Id			T
 1	1	0	1	0	1	0	0   | 	0	1	0	0	0	0	1	1
 multi byte values are little endian -> int 23 =  [23|00]
 */
@@ -58,7 +67,7 @@ struct modhead_s		//3 bytes
   byte HasFollower : 1; //next module will be called with same timer
   byte HasTimer : 1;
   byte IsFollower : 1;
-  byte LoopbackOverride : 1;	//ignore hysteresis for evaluation or suppress messaging for actor modules
+  byte HystOverride : 1;	//ignore hysteresis for evaluation or suppress messaging for actor modules
   byte Startup : 1;			//run module at startup
   byte TimerPtr : 4;
   byte State : 4;
@@ -88,6 +97,7 @@ struct link_s
    byte Reg : 5;
    byte Len : 3;
    byte ConditionPtr: 5;
+   byte Dummy : 5;
 };
 link_s* pActLink;
 
@@ -207,8 +217,9 @@ unsigned char PVal;				//current power (pwm val max 1023)
 struct dhtmod_s
 {
 modhead_s Head;
+TimeUnit IntervalUnit;
+unsigned int MeasureInterval;         //seconds
 byte DhtPin;      
-byte MeasureInterval;         //seconds   
 byte TempHyst;                //Hysteresis 0.1 degrees                  
 byte HumiHyst;                //Hysteresis 0.1 %
 int TempVal;
@@ -218,10 +229,10 @@ unsigned int HumiVal;
 #define DHTTYPE 3
 #define DHTSIZE sizeof(dhtmod_s)
 #define DHTINTE sizeof(modhead_s) +  1
-#define DHTTHYS sizeof(modhead_s) +  2
-#define DHTHHYS sizeof(modhead_s) +  3
-#define DHTTVAL sizeof(modhead_s) +  4
-#define DHTHVAL sizeof(modhead_s) +  6
+#define DHTTHYS sizeof(modhead_s) +  4
+#define DHTHHYS sizeof(modhead_s) +  5
+#define DHTTVAL sizeof(modhead_s) +  6
+#define DHTHVAL sizeof(modhead_s) +  8
 #endif
 #ifdef ENABLE_ANA
 
@@ -271,8 +282,15 @@ typedef void (*function) (byte cmd) ;
 function arrOfFunctions[] = { RunFan, RunDht11 };
 */
 
-byte NodeId = 1;
-byte LogLevel = 3;		//0..minimum logging
+/*
+ * Example function pointer array
+void (*p[10]) (byte cmd);
+p[0] = RunFan;
+result = (*p[0]) (i);
+*/
+
+byte NodeId = EEPROM.read(1023);   //Change: 58 7 0 1 6 3 255 2
+byte LogLevel = EEPROM.read(1022); //0..no logging - Change: 58 7 0 1 6 3 254 2
 
 byte Module[MODULESMAX];
 byte CountModules;
@@ -341,6 +359,9 @@ void setup() {
 */
 #endif
 
+LoadConfigEE();
+return;
+
 Register[RegCount++] = MODULESMAX - 1 - DirectRegCount++;			//REG 0: seconds
 Register[RegCount++] = MODULESMAX - 1 - DirectRegCount++;			//REG 1: minutes
 Register[RegCount++] = MODULESMAX - 1 - DirectRegCount++;			//REG 2: hours
@@ -358,8 +379,27 @@ RunModule(5,0xff,false);
 
 ptr = NewModule(2,DHTTYPE);
 dhtmod_s* pActDht = (dhtmod_s*)&Module[ptr];
-//(head:         type   ,id,enabled ,follower,hastimer,isfollower, loopover,startup,timerptr,state) ,pin ,interv ,hysttmp,hysthum,tempval,humival
-dhtmod_s tmp = {{DHTTYPE,2 ,1       ,0       ,1       ,0         ,1        ,1     ,0       ,0}     ,6   ,15     ,1       ,1      ,0      ,0    };
+//(head:         type   ,id,enabled ,follower,hastimer,isfollower, hystover,startup,timerptr,state), unit ,interv, pin ,hysttmp,hysthum,tempval,humival
+dhtmod_s tmp = {{DHTTYPE,2 ,1       ,0       ,1       ,0         ,1        ,1     ,0       ,0}     ,tensec,150   ,6    ,1       ,1      ,0      ,0    };
+/*
+ * Sample memory dump for dht module with sendconfig
+ *
+struct dhtmod_s
+{
+modhead_s Head;
+TimeUnit IntervalUnit;
+unsigned int MeasureInterval;         //seconds
+byte DhtPin;
+byte TempHyst;                //Hysteresis 0.1 degrees
+byte HumiHyst;                //Hysteresis 0.1 %
+int TempVal;
+unsigned int HumiVal;
+};
+035 012 001 000 004 067 212 000 001 150 000 006 001 035 011 001 000 004 001 023 000 058 000
+:   len nod mod slt h1  h2  h3 unit iv1 iv2 pin hyt  :  len nod mod slt hyh t1  t2  h1  h2
+<----msg header --><-mod head-><---mod data--------> <----msg header--><-mod data--------->
+
+*/
 *pActDht = tmp;
 RunModule(2,0xff,false);
 Register[RegCount++] = ptr + DHTHVAL;								//REG 4: Humi value
@@ -411,7 +451,7 @@ byte Dummy : 4;
 ptr = NewModule(3,FANTYPE);
 fanmod_s* pActFan = (fanmod_s*)&Module[ptr];
 //(head:          type   ,id,enabled ,follower,hastimer,isfollower,loopover, start,timerptr,state) ,pwrdyn,pwrlow,pwrhigh,ontime,delaytime,delayunit,onunit,mode,powerpin,invertpower,pwmpin,dummy
-fanmod_s tmpf = {{FANTYPE,3 ,1       ,0       ,1       ,0         ,0       ,0     ,0       ,0}     ,0     ,20    ,90     ,200   ,200      ,tensec   ,tensec,0   ,7       ,0          ,3 };
+fanmod_s tmpf = {{FANTYPE,3 ,1       ,0       ,1       ,0         ,0       ,0     ,0       ,0}     ,0     ,20    ,90     ,400   ,200      ,tensec   ,tensec,0   ,7       ,0          ,3 };
 *pActFan = tmpf;
 RunModule(3,0xff,false);
 Register[RegCount++] = ptr + FANPDYN;								//REG 5: Humi value
@@ -516,6 +556,8 @@ Link[1].Reg = 0;
 Link[1].ConditionPtr = 3;
 CountLink++;
 
+
+SaveConfigEE();
 
 /*
 CreateTimer(5,200,tensec,1);
@@ -625,12 +667,13 @@ boolean ReceiveSerial() {
 	char rec = (char)Serial.read();
 //	Serial.println(rec);
 	if (msginstate == 0) {
-		if (rec == ':')
+		if (rec == ':')			//hex: 3A - Dec 58
 			msginstate = 1;
 	}
 	else if(msginstate == 1) {
-		if (rec >= 50 && rec < 58) {			//allowed length 2 - 9
-			pActInMsg->p.Length = rec - 48;		//max length: 9!!
+		if (rec >= 4 && rec <= 12) {			//allowed length 4 - 12 (4 bytes header)
+//		if (rec >= 50 && rec < 58) {			//allowed length 2 - 9
+			pActInMsg->p.Length = rec;		//max length: 12!!
 			msginstate = 2;
 			msginchk = 0;
 		}
@@ -638,7 +681,7 @@ boolean ReceiveSerial() {
 			msginstate = 0;
 	}
 	else if(msginstate >= 2) {
-		rec-=48;
+//		rec-=48;
 		if (msginstate < 0xfe) {
 			pActInMsg->data[msginstate - 1] = rec;
 			msginstate++;
@@ -648,7 +691,7 @@ boolean ReceiveSerial() {
 				else
 					msginwrite = 0;
 				if (msginwrite == msginread)
-					SendMsg(0,0,1,0,&rec,false);		//send overflow error: Module 0, Slot 0
+					SendMsg(0,0,1,0,&rec,2);		//send overflow error: Module 0, Slot 0
 //				Serial.print("state: ");
 //				Serial.println(msginstate);
 				msginstate = 0;
@@ -899,15 +942,18 @@ void NewConfigData() {
 }
 
 //--------------------------------------------------
-//--------------- Receive Config Data -----------------------------
+//--------------- Change Config Data -----------------------------
+//---------------- cmd: 1 ----------------------------
 //load data from msg into node storage
 //Slot: 0..modules; 1..timer; 2..link; 3..condition; 4..register; 5..direct register; 6..eeprom
-//pay0: -> 0xff..load at writeptr / other: item index
-//pay1: -> high byte address eeprom  / others: offset count from start
+//pay0: -> 0xff..load at writeptr / other: item index / high byte eeprom
+//pay1: -> low byte address eeprom  / others: offset count from start
+//change eeprom startup flag 1022: 58 7 0 1 6 3 254 1
 
 void ChangeConfigData() {
 	byte type = pActInMsg->p.SrcSlot;
 	byte wptr;
+	byte rptr = 0;
 	byte* dataptr = 0;
 
 	if (type < 6) {
@@ -918,57 +964,76 @@ void ChangeConfigData() {
 			dataptr++;
 	//		Module[wptr++] = pActInMsg->aPay[j];
 		}
+		SendMsg(0,1,true,1,&dataptr,2);
 	}
 	else {
-		itmp = pActInMsg->p.aPay[1];
-		itmp = itmp << 8;
 		itmp = pActInMsg->p.aPay[0];
-		wptr = 2;
-		for (itmp; itmp < itmp + pActInMsg->p.Length - 2; itmp++) {
-			EEPROM.write(itmp,(unsigned char)pActInMsg->p.aPay[wptr++]);
+		itmp = itmp << 8;
+		itmp = itmp + pActInMsg->p.aPay[1];
+		for (rptr = 6; rptr < pActInMsg->p.Length; rptr++) {
+			EEPROM.write(itmp++,(unsigned char)pActInMsg->data[rptr]);
+#ifdef verbose
 			Serial.print(itmp-1);
 			Serial.print("---");
-			Serial.println(pActInMsg->p.aPay[wptr-1]);
+			Serial.println(pActInMsg->data[rptr]);
+#endif
 		}
+		SendMsg(0,1,true,2,&itmp,2);
 	}
 }
 //--------------------------------------------------
 //--------------- Send Config Data -----------------------------
+//--------------- cmd: 2   -----------------------------------
 //read data from module array
 //Slot: 0..modules; 1..timer; 2..link; 3..condition; 4..register; 5..direct register; 6..eeprom
-//pay0: -> modules: load address - 0xff..load at writeptr / others: item index
-//pay1: -> high byte address eeprom  / others: offset count from start
+//pay0: -> eeprom: load address; 0xff..load at writeptr / others: item index / high byte eeprom
+//pay1: -> low byte eeprom address  / others: offset bytes from start
 //pay2: length
+//									  : len src m  s p0 p1 p2
+//ex: read first 12 bytes of modules: 58 7  0   2  0 0  0  12
+//ex: read first 32 bytes of eeprom : 58 7  0   2  6 0  0  32
 void SendConfigData() {
 	byte type = pActInMsg->p.SrcSlot;
 	byte rptr = 0;
 	byte* dataptr = 0;
+	byte wptr = 0;
+	byte len;
 
 #ifdef verbose
-	Serial.println("Sendconfigdata");
+	Serial.print("Sendconfigdata");
 	Serial.print(type);
 	Serial.print("---");
 	Serial.print(pActInMsg->p.aPay[0]);
 	Serial.print("---");
 	Serial.print(pActInMsg->p.aPay[1]);
 	Serial.print("---");
-	Serial.print(pActInMsg->p.aPay[2]);
+	Serial.println(pActInMsg->p.aPay[2]);
 #endif
 
+	len = pActInMsg->p.aPay[2];
 	pActOutMsg->p.SrcModule = 0;
 	if (type < 6) {
 		dataptr = GetDataPtr(type,pActInMsg->p.aPay[0],&rptr);
 		dataptr += pActInMsg->p.aPay[1];
-		SendMsg(0,4,true,pActInMsg->p.aPay[2],dataptr,false);
+		for (rptr = 0; rptr < len; rptr++) {
+			pActOutMsg->p.aPay[wptr++] = *dataptr;
+			dataptr++;
+			if (wptr > 7) {
+				SendMsg(0,2,true,wptr,&pActOutMsg->p.aPay[0],2);
+				wptr = 0;
+			}
+		}
+		if (wptr != 0)
+			SendMsg(0,2,true,wptr,&pActOutMsg->p.aPay[0],2);
 	}
 	else {
-		itmp = pActInMsg->p.aPay[1];
-		itmp = itmp << 8;
 		itmp = pActInMsg->p.aPay[0];
-		Serial.print("itmp");
-		Serial.println(itmp);
-		for (rptr = 0; rptr < pActInMsg->p.aPay[2]; rptr++) {
-			pActOutMsg->p.aPay[rptr] = EEPROM.read(itmp++);
+		itmp = itmp << 8;
+		itmp = itmp + pActInMsg->p.aPay[1];
+//		Serial.print("itmp");
+//		Serial.println(itmp);
+		for (rptr = 0; rptr < len; rptr++) {
+			pActOutMsg->p.aPay[wptr++] = EEPROM.read(itmp++);
 			/*
 			Serial.print(rptr);
 			Serial.print("---");
@@ -976,10 +1041,13 @@ void SendConfigData() {
 			Serial.print("---");
 			Serial.println(pActOutMsg->p.aPay[rptr]);
 			*/
-			if (rptr > 7)
-				break;
+			if (wptr > 7) {
+				SendMsg(0,2,true,wptr,&pActOutMsg->p.aPay[0],2);
+				wptr = 0;
+			}
 		}
-		SendMsg(0,4,true,rptr+1,&pActOutMsg->p.aPay[0],false);
+		if (wptr != 0)
+			SendMsg(0,2,true,wptr,&pActOutMsg->p.aPay[0],2);
 	}
 }
 
@@ -1030,16 +1098,22 @@ void RunModuleCmd() {
 // Cmd: 1...turn off; 0...timer call; 2..turn on slow; 3..turn on high delay; 4..turn on high; 5..reduce from high ; 6..turn on dynamic delay; 0xFF...config
 void RunFan(byte Cmd) {
   byte PowerVal;
+  byte LastState;
+  byte LastMode;
+
   fanmod_s* pFanMod = (fanmod_s*)pActHead;
   
+  LastState = pFanMod->Head.State;
+  LastMode = pFanMod->Mode;
+
   #if defined(verbose)  
-      Serial.print("Enter runfan:");
+      Serial.print("Runfan: ");
       Serial.print(Cmd);
-      Serial.print("state:");
-      Serial.print(pFanMod->Head.State);
-      Serial.print("timerptr");
-      Serial.println(pFanMod->Head.TimerPtr);
-      getRPMS();
+      Serial.print(" State:");
+      Serial.println(pFanMod->Head.State);
+//      Serial.print("timerptr");
+//      Serial.println(pFanMod->Head.TimerPtr);
+//      getRPMS();
   #endif
 
   if (Cmd == 0xff) {
@@ -1053,7 +1127,7 @@ void RunFan(byte Cmd) {
 	 if (pFanMod->PwmPin) {
 		 pinMode(pFanMod->PwmPin, OUTPUT);
 	 }
-  pinMode(2, INPUT);		//TODO! remove or clean up
+  //pinMode(2, INPUT);		//for rpm data
      // Set up Fast PWM on Pin 3                          
      TCCR2A = 0x23;                             
      // Set prescaler                   
@@ -1105,8 +1179,6 @@ void RunFan(byte Cmd) {
   
   if (pFanMod->Head.HasTimer) {
   	  pActTimer = &Timer[pFanMod->Head.TimerPtr];
-  	  Serial.print("nxtime");
-  	  Serial.println(pActTimer->NextTimer);
   }
 
   switch(pFanMod->Head.State)
@@ -1144,7 +1216,8 @@ void RunFan(byte Cmd) {
 		   ReloadTimer(pActTimer);
 	   }
 	   pFanMod->Head.State = 3;
-	   SendMsg(pActHead->Id,2,false,1,&PowerVal,pFanMod->Head.LoopbackOverride);
+	   if (LastState != 3 || pFanMod->Mode != LastMode)
+		   SendMsg(pActHead->Id,2,false,1,&PowerVal,pFanMod->Head.HystOverride);
 	   break;
 	 case 3:            //Turn off
 		 OCR2B = 0;
@@ -1153,7 +1226,7 @@ void RunFan(byte Cmd) {
 			 digitalWrite(pFanMod->PowerPin, HIGH);
 		 else
 			 digitalWrite(pFanMod->PowerPin, LOW);
-		 SendMsg(pActHead->Id,1,false,1,&PowerVal,pFanMod->Head.LoopbackOverride);
+		 SendMsg(pActHead->Id,1,false,1,&PowerVal,pFanMod->Head.HystOverride);
 		 if (pFanMod->Head.HasTimer) {
 			 pActTimer->Mode = 0;
 		 }
@@ -1192,7 +1265,7 @@ void RunDht11(byte Cmd) {
 		pActTimer = &Timer[TimerWritePtr];
 		pDhtMod->Head.TimerPtr = TimerWritePtr;
 		if (!pDhtMod->Head.IsFollower) {
-			CreateTimer(pActHead->Id,pDhtMod->MeasureInterval * 10,tensec,0);
+			CreateTimer(pActHead->Id,pDhtMod->MeasureInterval, pDhtMod->IntervalUnit,0);
 		 }
 	 }
      return;
@@ -1246,16 +1319,16 @@ void RunDht11(byte Cmd) {
 	  else
 		  pDhtMod->TempVal = -100;
   	  chk = (chk * 32) + pDhtMod->TempVal;		//include error count
-	  SendMsg(pActHead->Id,0xff,true,2,&chk,0);            //send error to master
+	  SendMsg(pActHead->Id,0xff,true,2,&chk,2);            //send error to master
   }
   else {
-	 if (abs(DHT11.temperature - pDhtMod->TempVal) >= pDhtMod->TempHyst  || Cmd == 2 || pDhtMod->Head.LoopbackOverride) {
+	 if (abs(DHT11.temperature - pDhtMod->TempVal) >= pDhtMod->TempHyst  || Cmd == 2 || pDhtMod->Head.HystOverride) {
 		  pDhtMod->TempVal = DHT11.temperature;
-		  SendMsg(pActHead->Id,0,false,2,&DHT11.temperature,pDhtMod->Head.LoopbackOverride);
+		  SendMsg(pActHead->Id,0,false,2,&DHT11.temperature,pDhtMod->Head.HystOverride);
      }
-     if (abs(DHT11.humidity - pDhtMod->HumiVal) >= pDhtMod->HumiHyst  || Cmd == 2 || pDhtMod->Head.LoopbackOverride) {
+     if (abs(DHT11.humidity - pDhtMod->HumiVal) >= pDhtMod->HumiHyst  || Cmd == 2 || pDhtMod->Head.HystOverride) {
     	 pDhtMod->HumiVal = DHT11.humidity;
-    	 SendMsg(pActHead->Id,1,false,2,&DHT11.humidity,pDhtMod->Head.LoopbackOverride);
+    	 SendMsg(pActHead->Id,1,false,2,&DHT11.humidity,pDhtMod->Head.HystOverride);
      }
   }
 }
@@ -1337,7 +1410,7 @@ void RunButton(byte Cmd) {
           val = pButMod->ActiveHigh;
                                  
             }
-        SendMsg(pButMod->Head.Id, j,false, 1,&val,pButMod->Head.LoopbackOverride);
+        SendMsg(pButMod->Head.Id, j,false, 1,&val,pButMod->Head.HystOverride);
       }
    }
    pButMod->PinVal = newstate >> pButMod->Pin;
@@ -1531,7 +1604,7 @@ void DimConfigRamp(bool Down,byte dimmode, struct dimmod_s* pDimMod) {
 //--------------- ANALOG -----------------------------
 //--------------------------------------------------
 // msg structure 3 bytes: 1 byte % val; 2-3 byte raw analog val
-// cmd: 0..start interval measure; 1..off; 2..measure now; 0xff..config                                                     
+// cmd: 0..interval measure; 1..off; 2..measure now; 0xff..config
 void RunAnalogIn(byte Cmd) {
   anamod_s* pAnaMod = (anamod_s*)pActHead;
   union u {
@@ -1543,7 +1616,7 @@ void RunAnalogIn(byte Cmd) {
   } data;
 
  #if defined(verbose)  
-      Serial.print("Enter runanalogin:");
+      Serial.print("Runanalogin: ");
       Serial.println(Cmd);
  #endif
   
@@ -1582,7 +1655,7 @@ void RunAnalogIn(byte Cmd) {
 #endif
 */
 
-  if (abs(data.parts.t - pAnaMod->Value) >= pAnaMod->Hyst || Cmd == 2) {
+  if (abs(data.parts.t - pAnaMod->Value) >= pAnaMod->Hyst || Cmd == 2 || pAnaMod->Head.HystOverride) {
        if (data.parts.t < 10)
     	   data.parts.percent = data.parts.t;
        else {
@@ -1605,13 +1678,15 @@ void RunAnalogIn(byte Cmd) {
  #endif
        pAnaMod->Value = data.parts.t;
        pAnaMod->PVal = data.parts.percent;
-       SendMsg(pActHead->Id,0,false,3,&data,pAnaMod->Head.LoopbackOverride);
+       SendMsg(pActHead->Id,0,false,3,&data,pAnaMod->Head.HystOverride);
      }
 }
 //===================================================                                                     
 #endif
-  
-void SendMsg(byte ModuleId, byte Slot, boolean bMaster, byte Length, void* Value, boolean LoopbackOnly)
+
+
+//Loopbackmode: 0..normal (send + loopb); 1..only loopback; 2..only send
+void SendMsg(byte ModuleId, byte Slot, boolean bMaster, byte Length, void* Value, byte LoopbackMode)
 {
 #if defined(verbose)
 //	Serial.println("Enter Sendmsg:");
@@ -1669,8 +1744,9 @@ Serial.println(pActOutMsg->p.aPay[7]);
 	  msgoutwrite = 0;
 	  pActOutMsg = (msg_s*)&MessageOut[msgoutwrite];
   }
-  RecvMsg(true);		//loopback
-  if (LoopbackOnly)
+  if (LoopbackMode != 2)
+	  RecvMsg(true);		//loopback
+  if (LoopbackMode == 1)
 	  return;
 
   Serial.print('#');
@@ -1682,7 +1758,7 @@ void RecvMsg(bool loopback)
     if (loopback)
       pActInMsg = pActOutMsg;
 #ifdef verbose
-    /*
+/*
 	Serial.println("Enter Recv");
 	   Serial.print("srcnode");
 	   Serial.print(pActInMsg->p.SrcNode);
@@ -1690,7 +1766,7 @@ void RecvMsg(bool loopback)
 	  Serial.print(pActInMsg->p.SrcModule);
 	  Serial.print(" srcSlot: ");
 	  Serial.println(pActInMsg->p.SrcSlot);
-	  */
+*/
 #endif
     if (pActInMsg->p.SrcNode == 0) {		//master message
     	if (pActInMsg->p.SrcModule == 1) {			//Receive config
@@ -1714,16 +1790,16 @@ void RecvMsg(bool loopback)
     	else if (pActInMsg->p.SrcModule == 7) {		//Send node data - version TODO: add modules, etc
 			Serial.println("TEST!");
 			tmp = version;
-			SendMsg(0,7,false,1,&tmp,false);
+			SendMsg(0,7,false,1,&tmp,2);
 		}
     } else {                                         
        for (byte j = 0; j < CountLink; j++) {
 /*
-    	   Serial.print("srcnode");
+    	   Serial.print("node");
     	   Serial.print(Link[j].SrcNode);
-    	  Serial.print(" srcmod: ");
+    	  Serial.print(" mod: ");
     	  Serial.print(Link[j].SrcModule);
-    	  Serial.print(" srcSlot: ");
+    	  Serial.print(" Slot: ");
     	  Serial.println(Link[j].SrcSlot);
 */
           if (Link[j].SrcNode == pActInMsg->p.SrcNode && Link[j].SrcModule == pActInMsg->p.SrcModule && Link[j].SrcSlot == pActInMsg->p.SrcSlot) {
@@ -1896,6 +1972,11 @@ byte GetModuleSize(byte Type) {
 	    return BUTSIZE;
 	    break;
 #endif
+#ifdef ENABLE_DIM
+	case DIMTYPE:
+	    return DIMSIZE;
+	    break;
+#endif
 	default:
 		break;
 	}
@@ -1916,18 +1997,26 @@ void TimeSync() {
 	Module[Register[2]] = pActInMsg->p.aPay[2];					//hrs
 }
 
+//--------------------------------------------------
+//--------------- Save Config Eeprom -----------------------------
+//---------------- cmd: 5 ----------------------------
 //write config data to eeprom
 //structure:   lmmmmmmmlddddddddlrrrrrrrrrlkkkkkkkkkk
 //l: length m: module bytes; d dirct registers
+//
+// cmd: 58 4    0   5   0
+//		:  len src mod slot
+
 void SaveConfigEE() {
 	unsigned int pos = 0;
 	byte* ptr;
 	byte j = 0;
 
-	Serial.println("SaveConfig");
+	Serial.println("SaveConfigEE");
 	itmp = ModuleWritePtr + RegCount +  CountLink * sizeof(link_s) + CountCond * sizeof(cond_s);
-	if (itmp > 1020) {
-		SendMsg(0,1,1,2,&itmp,0);					//ERROR 1: not enough space on eeprom for config
+	if (itmp > DATAPARTITIONSIZE) {
+		itmp = 1025;
+		SendMsg(0,5,1,2,&itmp,2);					//ERROR: not enough space on eeprom for config - send 1025
 		return;
 	}
 
@@ -1944,68 +2033,107 @@ void SaveConfigEE() {
 	for (j=0; j < RegCount; j++) {
 		EEPROM.write(pos++,Register[j]);
 	}
+
 	EEPROM.write(pos++,CountLink);				//link
-	ptr = (byte*)&Link[j];
+	ptr = (byte*)&Link[0];
 	for (j=0; j < CountLink * sizeof(link_s); j++) {
 		EEPROM.write(pos++,ptr[j]);
+//		Serial.println(ptr[j]);
 	}
+
 	EEPROM.write(pos++,CountCond);				//condition
-	ptr = (byte*)&Condition[j];
+	ptr = (byte*)&Condition[0];
 	for (j=0; j < CountCond * sizeof(cond_s); j++) {
 		EEPROM.write(pos++,ptr[j]);
+//		Serial.println(ptr[j]);
 	}
-	if (LogLevel > 1)
-		SendMsg(0,2,true,2,&pos,false);				//send bytes saved
+	SendMsg(0,5,true,2,&pos,2);				//send bytes saved
 }
 
+//--------------------------------------------------
+//--------------- Load Config from Eeprom -----------------------------
+//---------------- cmd: 6 ----------------------------
 //read config data from eeprom
 //configure and start modules
+// cmd: 58 4    0   6   0
+//		:  len src mod slot
 void LoadConfigEE() {
 	byte j = 0;
 	unsigned int pos = 0;
 	byte end = 0;
 	byte* ptr;
 
-	NodeId = EEPROM.read(1023);
-	LogLevel = EEPROM.read(1022);
+	Serial.println("LoadConfigEE1");
+
+	if (EEPROM.read(1021) != 1)			//read cfg from eeprom flag set?
+		return;
+
+	Serial.println("LoadConfigEE2");
+
 	end = EEPROM.read(pos++);			//module
+	Serial.println(end);
 	for (ModuleWritePtr=0; ModuleWritePtr < end; ModuleWritePtr++) {
 		Module[ModuleWritePtr] = EEPROM.read(pos++);
+		Serial.print(ModuleWritePtr);
+		Serial.print("--");
+		Serial.println(Module[ModuleWritePtr]);
 	}
+	Serial.print("mods: ");
+	Serial.println(pos);
 	end = EEPROM.read(pos++);			//direct register
 	for (DirectRegCount=0; DirectRegCount < end; DirectRegCount++) {
 		Module[MODULESMAX - 1 - DirectRegCount] = EEPROM.read(pos++);
 	}
+	Serial.print("direct: ");
+	Serial.println(pos);
 	end = EEPROM.read(pos++);			//module register
 	for (RegCount=0; RegCount < end; RegCount++) {
 		Register[RegCount] = EEPROM.read(pos++);
 	}
+	Serial.print("regs: ");
+	Serial.println(pos);
+
 	CountLink = EEPROM.read(pos++);				//link
-	ptr = (byte*)&Link[j];
+	ptr = (byte*)&Link[0];
 	for (j=0; j < CountLink * sizeof(link_s); j++) {
 		ptr[j] = EEPROM.read(pos++);
+		Serial.println(ptr[j]);
 	}
+	Serial.print("link: ");
+	Serial.println(pos);
+
 	CountCond = EEPROM.read(pos++);				//condition
-	ptr = (byte*)&Condition[j];
+	ptr = (byte*)&Condition[0];
 	for (j=0; j < CountCond * sizeof(cond_s); j++) {
 		ptr[j] = EEPROM.read(pos++);
+		Serial.println(ptr[j]);
 	}
+	Serial.print("cond: ");
+	Serial.println(pos);
+
 	j = 0;
 	while (j + 1 < ModuleWritePtr) {			//configure modules
+		Serial.print("mod cfg: ");
+		Serial.println(j);
 		pActHead = (modhead_s*)&Module[j];
+		Serial.print("id: ");
+		Serial.println(pActHead->Id);
+		ModId[pActHead->Id] = j;
+		j += GetModuleSize(pActHead->Type);
 		RunModule(pActHead->Id,0xff,false);
-		j += GetModuleSize(pActHead->Id);
 		CountModules++;
 	}
 	j = 0;
 	while (j + 1 < ModuleWritePtr) {			//run modules
+		Serial.print("mod run: ");
+		Serial.println(j);
 		pActHead = (modhead_s*)&Module[j];
+		j += GetModuleSize(pActHead->Type);
 		if (pActHead->Startup)
 			RunModule(pActHead->Id,0,false);
-		j += GetModuleSize(pActHead->Id);
 	}
 	if (LogLevel > 1)
-		SendMsg(0,3,true,2,&pos,false);				//send bytes read
+		SendMsg(0,6,true,2,&pos,2);				//send bytes read
 }
 
 
