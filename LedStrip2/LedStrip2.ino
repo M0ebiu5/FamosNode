@@ -1,7 +1,7 @@
 /*
  * eeprom structure
- * 0....1021 		module config data (1 byte len -> cfg array (eg modules))
- * 1021				start from eeprom
+ * 0....1010 (datapartitionsize)	module config data (1 byte len -> cfg array (eg modules))
+ * 1021				load config from eeprom flag (1..active)
  * 1022				log level (0-3)
  * 1023				node id (1-255)
  */
@@ -45,9 +45,9 @@ struct timer_s
   TimeUnit Unit : 3;         //milli, tensec, tenhour
   byte Mode : 2;         //0..disabled; 1..only once; 2..repeat inf                                         
   byte Wait4Over : 1;    //timer wait 4 overflow
-  unsigned int Interval;
+  word Interval;
   byte Cmd;
-  unsigned int NextTimer;                                
+  word NextTimer;
 };
 timer_s* pActTimer;
 #define TIMTYPE 0
@@ -117,7 +117,7 @@ struct msg_s
 	 byte data[12];
 	 struct {
 		 byte Length;
-		 byte SrcNode;		//0...master node
+		 byte SrcNode;		//> 127...master node -> 7 bits target node; 0xFF broadcast
 		 byte SrcModule;
 		 byte SrcSlot;
 		 byte aPay[8];
@@ -140,7 +140,7 @@ byte DblCount : 4;
 byte PinVal : 1;      //store last value                        
 byte Port : 2;            
 byte Pin : 4;
-unsigned int ReArmTime; //time (tensec) to wait for reactivation
+word ReArmTime; //time (tensec) to wait for reactivation
 };
 #define BUTTYPE 1
 #define BUTSIZE sizeof(butmod_s)
@@ -150,11 +150,11 @@ unsigned int ReArmTime; //time (tensec) to wait for reactivation
 struct fanmod_s
 {
 modhead_s Head;
-unsigned char PowerDynamic;    //Power % 
-unsigned char PowerLow;        //Power %                
-unsigned char PowerHigh;       //Power %                 
-unsigned int OnTime;                      
-unsigned int DelayTime;
+byte PowerDynamic;    //Power %
+byte PowerLow;        //Power %
+byte PowerHigh;       //Power %
+word OnTime;
+word DelayTime;
 TimeUnit DelayTimeUnit : 3;
 TimeUnit OnTimeUnit : 3;
 byte Mode : 3;         //0..low, 1..high, 2..dynamic rpm / hygro
@@ -184,17 +184,16 @@ modhead_s Head;
 byte Mode : 3;         //0..normal (from PwrLow -> PwrHigh with up and downtime) (discard dim values), 1..normal - store dim values
 byte PowerPin : 5;
 byte PwmPin : 5;
-byte Dummy : 3;
 TimeUnit OnTimeUnit : 3;
-unsigned char PowerLow;        //Power %
-unsigned char PowerHigh;       //Power %
-unsigned int UpTime;		   //tensec
-unsigned int DownTime;		   //tensec
-unsigned int OnTime;   			//tensec - time on high power
-unsigned char PwmPeriod;		//pwm Cycle * 100
-unsigned char DimTime;      	//in 10 millis - time btw steps on dimming operation
-unsigned char OffDimTime;      	//in 100 micros - time btw steps on dimming operation for manual off
-unsigned char PVal;				//current power (pwm val max 1023)
+byte PowerLow;        //Power %
+byte PowerHigh;       //Power %
+word UpTime;		   //tensec
+word DownTime;		   //tensec
+word OnTime;   			//tensec - time on high power
+byte PwmPeriod;		//pwm Cycle * 100
+byte DimTime;      	//in 10 millis - time btw steps on dimming operation
+byte OffDimTime;      	//in 100 micros - time btw steps on dimming operation for manual off
+byte PVal;				//current power (pwm val max 1023)
 };
 
 #define DIMTYPE 5
@@ -218,21 +217,21 @@ struct dhtmod_s
 {
 modhead_s Head;
 TimeUnit IntervalUnit;
-unsigned int MeasureInterval;         //seconds
-byte DhtPin;      
+byte DhtPin : 5;
+word MeasureInterval;         //seconds
 byte TempHyst;                //Hysteresis 0.1 degrees                  
 byte HumiHyst;                //Hysteresis 0.1 %
 int TempVal;
-unsigned int HumiVal;
+word HumiVal;
 };
                     
 #define DHTTYPE 3
 #define DHTSIZE sizeof(dhtmod_s)
 #define DHTINTE sizeof(modhead_s) +  1
-#define DHTTHYS sizeof(modhead_s) +  4
-#define DHTHHYS sizeof(modhead_s) +  5
-#define DHTTVAL sizeof(modhead_s) +  6
-#define DHTHVAL sizeof(modhead_s) +  8
+#define DHTTHYS sizeof(modhead_s) +  3
+#define DHTHHYS sizeof(modhead_s) +  4
+#define DHTTVAL sizeof(modhead_s) +  5
+#define DHTHVAL sizeof(modhead_s) +  7
 #endif
 #ifdef ENABLE_ANA
 
@@ -241,10 +240,11 @@ struct anamod_s
   modhead_s Head;
   byte AnaPin : 3;
   TimeUnit IntervalUnit;
-  unsigned int MeasureInterval;
+  byte Dummy : 2;
+  word MeasureInterval;
   byte Hyst;
   byte Calibration;			//cut off value * 4 for % calculation - eg: calibration val = 110 -> 440 -> 1023 - 440 -> 583 is 100%
-  unsigned int Value;
+  word Value;
   byte PVal;				//percent value
 };
 #define ANATYPE 4
@@ -261,7 +261,7 @@ struct onemod_s
   byte OnePin : 4;
   TimeUnit IntervalUnit : 3;
   byte Dummy : 1;
-  unsigned int MeasureInterval;
+  word MeasureInterval;
   byte NodeCount;
   byte Hyst;
   int Val[6];
@@ -324,6 +324,7 @@ byte msginstate = 0;		//0..waiting for start sign :; 1..waiting for length; 2..d
 unsigned int msginchk = 0;
 msg_s* pActOutMsg = (msg_s*)&MessageOut[0];
 msg_s* pActInMsg = (msg_s*)&MessageIn[0];
+char buf = 0;
 
 unsigned long ms = 0;
 unsigned int mc = 0;
@@ -652,10 +653,26 @@ Serial.println(msginwrite);
   hourold = hour;
 }
 
+
+byte getVal(char c)
+{
+   if (c >= '0' && c <= '9')
+     return (byte)(c - '0');
+   else
+     return (byte)(c-'A'+10);
+}
+
+boolean CheckInput(char c)
+{
+	if ((c >= '0' && c <= '9') || (c >= 'A' && c <= 'F'))
+		return true;
+	else
+		return false;
+}
+
 //receive msg
 //:lddddd
 //msg starts with : followed by length and data
-
 boolean ReceiveSerial() {
 
 	if (mil - lastinput > SERIAL_TIMEOUT)
@@ -665,27 +682,57 @@ boolean ReceiveSerial() {
 	lastinput = mil;
 
 	char rec = (char)Serial.read();
-//	Serial.println(rec);
+//	Serial.print("mstate: " );
+//	Serial.println(msginstate);
 	if (msginstate == 0) {
 		if (rec == ':')			//hex: 3A - Dec 58
-			msginstate = 1;
+			msginstate=1;
 	}
 	else if(msginstate == 1) {
-		if (rec >= 4 && rec <= 12) {			//allowed length 4 - 12 (4 bytes header)
-//		if (rec >= 50 && rec < 58) {			//allowed length 2 - 9
-			pActInMsg->p.Length = rec;		//max length: 12!!
-			msginstate = 2;
-			msginchk = 0;
+		if (CheckInput(rec)){
+			buf = rec;
+			msginstate++;
 		}
 		else
 			msginstate = 0;
 	}
-	else if(msginstate >= 2) {
+	else if(msginstate == 2) {
+		if (CheckInput(rec)){
+			pActInMsg->p.Length = getVal(rec) + (getVal(buf) << 4);
+//			Serial.print("mlen: " );
+//			Serial.println(pActInMsg->p.Length);
+			if (pActInMsg->p.Length > 3 && pActInMsg->p.Length < 13)
+				msginstate++;
+			else
+				msginstate = 0;
+		}
+		else
+			msginstate = 0;
+	}
+	else if(msginstate >= 3) {
 //		rec-=48;
 		if (msginstate < 0xfe) {
-			pActInMsg->data[msginstate - 1] = rec;
+			tmp = (msginstate / 2) -1;
+			if (msginstate % 2 == 1)
+			{
+				buf = rec;
+			}
+			else {
+				pActInMsg->data[tmp] = getVal(rec) + (getVal(buf) << 4);
+/*				Serial.print("tmp: ");
+				Serial.print(tmp);
+				Serial.print(" ddd: ");
+				Serial.println(pActInMsg->data[tmp]);
+*/
+			}
 			msginstate++;
-			if (msginstate - 1 >= pActInMsg->p.Length) {
+
+			if (tmp >= pActInMsg->p.Length - 1) {
+/*				Serial.print("tmp: ");
+				Serial.println(tmp);
+				Serial.print("le: ");
+				Serial.println(pActInMsg->p.Length);
+*/
 				if (msginwrite + pActInMsg->p.Length < INMAX - sizeof(msg_s))
 					msginwrite+= pActInMsg->p.Length;
 				else
@@ -694,6 +741,8 @@ boolean ReceiveSerial() {
 					SendMsg(0,0,1,0,&rec,2);		//send overflow error: Module 0, Slot 0
 //				Serial.print("state: ");
 //				Serial.println(msginstate);
+//				Serial.print("msg: " );
+//				Serial.println(pActInMsg->p.SrcModule);
 				msginstate = 0;
 				return true;							//msg complete!
 //				msginstate = 0xfe;
@@ -986,7 +1035,7 @@ void ChangeConfigData() {
 //--------------- cmd: 2   -----------------------------------
 //read data from module array
 //Slot: 0..modules; 1..timer; 2..link; 3..condition; 4..register; 5..direct register; 6..eeprom
-//pay0: -> eeprom: load address; 0xff..load at writeptr / others: item index / high byte eeprom
+//pay0: -> eeprom: load address; / others: item index / high byte eeprom ; 0xff..read all
 //pay1: -> low byte eeprom address  / others: offset bytes from start
 //pay2: length
 //									  : len src m  s p0 p1 p2
@@ -1603,7 +1652,7 @@ void DimConfigRamp(bool Down,byte dimmode, struct dimmod_s* pDimMod) {
 //--------------------------------------------------
 //--------------- ANALOG -----------------------------
 //--------------------------------------------------
-// msg structure 3 bytes: 1 byte % val; 2-3 byte raw analog val
+// msg structure 3 bytes: 1 byte % val; 2 byte raw analog val
 // cmd: 0..interval measure; 1..off; 2..measure now; 0xff..config
 void RunAnalogIn(byte Cmd) {
   anamod_s* pAnaMod = (anamod_s*)pActHead;
@@ -1709,8 +1758,9 @@ void SendMsg(byte ModuleId, byte Slot, boolean bMaster, byte Length, void* Value
 //		Serial.println(((byte *)Value)[j]);
 	  }
   }
-/*
+
 #if defined(verbose)
+  /*
 Serial.print(" id: ");
 Serial.print(pActOutMsg->p.SrcNode);
 Serial.print(" mod: ");
@@ -1736,8 +1786,8 @@ Serial.print("-");
 Serial.print(pActOutMsg->p.aPay[6]);
 Serial.print("-");
 Serial.println(pActOutMsg->p.aPay[7]);
-#endif
 */
+#endif
 
   msgoutwrite+=(Length+4);
   if (msgoutwrite + MSGSIZE >= OUTMAX) {
@@ -1750,7 +1800,12 @@ Serial.println(pActOutMsg->p.aPay[7]);
 	  return;
 
   Serial.print('#');
-  Serial.write(pActOutMsg->data,pActOutMsg->p.Length);
+  for (tmp = 0; tmp < pActOutMsg->p.Length; tmp++) {
+	  Serial.print(pActOutMsg->data[tmp],HEX);
+	  Serial.print("|");
+  }
+//	  Serial.write(pActOutMsg->data,pActOutMsg->p.Length);
+
 }
 
 void RecvMsg(bool loopback)
@@ -1768,7 +1823,9 @@ void RecvMsg(bool loopback)
 	  Serial.println(pActInMsg->p.SrcSlot);
 */
 #endif
-    if (pActInMsg->p.SrcNode == 0) {		//master message
+    if (pActInMsg->p.SrcNode > 127) {		//master message
+    	if (!(pActInMsg->p.SrcNode - 128 == NodeId || pActInMsg->p.SrcNode == 0xFF))	//check target address or broadcast
+    		return;
     	if (pActInMsg->p.SrcModule == 1) {			//Receive config
     		ChangeConfigData();
     	}

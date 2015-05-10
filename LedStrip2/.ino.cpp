@@ -1,7 +1,7 @@
 //This is a automatic generated file
 //Please do not modify this file
 //If you touch this file your change will be overwritten during the next build
-//This file has been generated on 2015-05-03 01:35:27
+//This file has been generated on 2015-05-11 00:22:00
 
 #include "Arduino.h"
 #include "enums.h"
@@ -10,6 +10,8 @@
 #include <TimerOne.h>
 void setup() ;
 void loop() ;
+byte getVal(char c) ;
+boolean CheckInput(char c) ;
 boolean ReceiveSerial() ;
 void CheckModuleTimers() ;
 byte NewModule(byte Id, byte Type) ;
