@@ -1,10 +1,14 @@
 /*
  * eeprom structure
  * 0....1010 (datapartitionsize)	module config data (1 byte len -> cfg array (eg modules))
- * 1021				load config from eeprom flag (1..active)
+ * 1021				load config from eeprom flag (1..active) - disable before update with changed module structure!
  * 1022				log level (0-3)
  * 1023				node id (1-255)
  */
+#define CFG_READEEPROM 1021
+#define CFG_LOGLEVEL 1022
+#define CFG_NODEID 1023
+
 #define DATAPARTITIONSIZE 1010		//module config space vs node config space
 
 #define __PROG_TYPES_COMPAT__
@@ -30,13 +34,13 @@
 #include "enums.h"
 #include <dht11.h>
 #include <eeprom.h>
+#include <SoftReset.h>
+#include <avr/wdt.h>
 
 #ifdef ENABLE_DIM
 #include <TimerOne.h>
 #endif
 //#include <DallasTemperature.h>
-
-dht11 DHT11;
 
 struct timer_s
 {
@@ -213,10 +217,12 @@ byte PVal;				//current power (pwm val max 1023)
 //TODO: 433Mhz, accelerometer, 1-wire
 
 #ifdef ENABLE_DHT
+dht11 DHT11;
+
 struct dhtmod_s
 {
 modhead_s Head;
-TimeUnit IntervalUnit;
+TimeUnit IntervalUnit : 3;
 byte DhtPin : 5;
 word MeasureInterval;         //seconds
 byte TempHyst;                //Hysteresis 0.1 degrees                  
@@ -239,7 +245,7 @@ struct anamod_s
 {
   modhead_s Head;
   byte AnaPin : 3;
-  TimeUnit IntervalUnit;
+  TimeUnit IntervalUnit : 3;
   byte Dummy : 2;
   word MeasureInterval;
   byte Hyst;
@@ -252,8 +258,9 @@ struct anamod_s
 #define ANAHYST sizeof(modhead_s) +  3
 #define ANACAL sizeof(modhead_s) +  4
 #define ANAVAL sizeof(modhead_s) +  5
-#define ANAPVAL sizeof(modhead_s) +  6
+#define ANAPVAL sizeof(modhead_s) +  7
 #endif
+
 #ifdef ENABLE_ONE
 struct onemod_s
 {
@@ -289,8 +296,8 @@ p[0] = RunFan;
 result = (*p[0]) (i);
 */
 
-byte NodeId = EEPROM.read(1023);   //Change: 58 7 0 1 6 3 255 2
-byte LogLevel = EEPROM.read(1022); //0..no logging - Change: 58 7 0 1 6 3 254 2
+byte NodeId = EEPROM.read(CFG_NODEID);   //Change: : 7 0 1 6 3 255 2
+byte LogLevel = 0;  //EEPROM.read(CFG_LOGLEVEL); //0..no logging - Change: : 7 0 1 6 3 254 2
 
 byte Module[MODULESMAX];
 byte CountModules;
@@ -360,8 +367,10 @@ void setup() {
 */
 #endif
 
+
 LoadConfigEE();
 return;
+
 
 Register[RegCount++] = MODULESMAX - 1 - DirectRegCount++;			//REG 0: seconds
 Register[RegCount++] = MODULESMAX - 1 - DirectRegCount++;			//REG 1: minutes
@@ -380,8 +389,8 @@ RunModule(5,0xff,false);
 
 ptr = NewModule(2,DHTTYPE);
 dhtmod_s* pActDht = (dhtmod_s*)&Module[ptr];
-//(head:         type   ,id,enabled ,follower,hastimer,isfollower, hystover,startup,timerptr,state), unit ,interv, pin ,hysttmp,hysthum,tempval,humival
-dhtmod_s tmp = {{DHTTYPE,2 ,1       ,0       ,1       ,0         ,1        ,1     ,0       ,0}     ,tensec,150   ,6    ,1       ,1      ,0      ,0    };
+//(head:         type   ,id,enabled ,follower,hastimer,isfollower, hystover,startup,timerptr,state), unit ,pin ,interv ,hysttmp,hysthum,tempval,humival
+dhtmod_s tmp = {{DHTTYPE,2 ,1       ,0       ,1       ,0         ,1        ,1     ,0       ,0}     ,tensec,6   ,150      ,1       ,1      ,0      ,0    };
 /*
  * Sample memory dump for dht module with sendconfig
  *
@@ -410,20 +419,20 @@ Register[RegCount++] = MODULESMAX - 1 - DirectRegCount++;			//REG 6: Free Regist
 Module[Register[RegCount-1]] = 47;									//set Humi Comp Value
 
 /*
-modhead_s Head;
 byte AnaPin : 3;
-TimeUnit IntervalUnit;
-unsigned int MeasureInterval;
-byte Hyst;
-byte Calibration;			//cut off value * 4 for % calculation - eg: calibration val = 110 -> 440 -> 1023 - 440 -> 583 is 100%
-unsigned int Value;
-byte PVal;				//percent value
+  TimeUnit IntervalUnit : 3;
+  byte Dummy : 2;
+  word MeasureInterval;
+  byte Hyst;
+  byte Calibration;			//cut off value * 4 for % calculation - eg: calibration val = 110 -> 440 -> 1023 - 440 -> 583 is 100%
+  word Value;
+  byte PVal;				//percent value
 */
 
 ptr = NewModule(1,ANATYPE);
 anamod_s* pActAna = (anamod_s*)&Module[ptr];
-//(head:         type    ,id ,enabled,follower,hastimer,isfollower, loopover,start,timerptr,state),pin,int.unit,interv,hyst,calibration,val,pval
-anamod_s tmpa = {{ANATYPE, 1 ,1      ,0       ,1       ,0         ,0        ,1    ,0       ,0 }   ,0  ,tensec  ,150   ,1   ,100        ,0  ,0        };
+//(head:         type    ,id ,enabled,follower,hastimer,isfollower, loopover,start,timerptr,state),pin,int.unit,dmy,interv,hyst,calibration,val,pval
+anamod_s tmpa = {{ANATYPE, 1 ,1      ,0       ,1       ,0         ,0        ,1    ,0       ,0 }   ,0  ,tensec  ,0  ,150   ,1   ,100        ,0  ,0        };
 *pActAna = tmpa;
 //CreateTimer(0xff,0,tensec,0);
 RunModule(1,0xff,false);
@@ -1008,7 +1017,7 @@ void ChangeConfigData() {
 	if (type < 6) {
 		dataptr = GetDataPtr(type,pActInMsg->p.aPay[0],&wptr);
 		dataptr+= pActInMsg->p.aPay[1];
-		for (byte j=2; j < pActInMsg->p.Length; j++) {
+		for (byte j=2; j < pActInMsg->p.Length - 4; j++) {
 			*dataptr = pActInMsg->p.aPay[j];
 			dataptr++;
 	//		Module[wptr++] = pActInMsg->aPay[j];
@@ -1027,6 +1036,7 @@ void ChangeConfigData() {
 			Serial.println(pActInMsg->data[rptr]);
 #endif
 		}
+		itmp--;
 		SendMsg(0,1,true,2,&itmp,2);
 	}
 }
@@ -1035,7 +1045,7 @@ void ChangeConfigData() {
 //--------------- cmd: 2   -----------------------------------
 //read data from module array
 //Slot: 0..modules; 1..timer; 2..link; 3..condition; 4..register; 5..direct register; 6..eeprom
-//pay0: -> eeprom: load address; / others: item index / high byte eeprom ; 0xff..read all
+//pay0: -> eeprom: load address; / others: item id or index / high byte eeprom ; 0xff..read all
 //pay1: -> low byte eeprom address  / others: offset bytes from start
 //pay2: length
 //									  : len src m  s p0 p1 p2
@@ -1124,6 +1134,20 @@ byte* GetDataPtr(byte Type, byte pos, byte* wptr) {
 	else
 		return &Module[Register[pos]];
 }
+//--------------------------------------------------
+//--------------- Run Cfg Command -----------------------------
+//cmd id == Slot; command payload == Pay[0]....
+//slot: 1..reset
+void RunCfgCmd() {
+	byte mp = 0;
+
+	if (pActInMsg->p.SrcSlot == 1){		//reset
+		soft_restart();
+	}
+}
+//===================================================
+
+
 //--------------------------------------------------
 //--------------- Run Module -----------------------------
 //run module id == Slot; command == Pay[0]
@@ -1341,10 +1365,10 @@ void RunDht11(byte Cmd) {
   switch (chk)
   {
     case DHTLIB_ERROR_CHECKSUM: 
-		Serial.println("Checksum error"); 
+		Serial.println("DHT Checksum error");
 		break;
     case DHTLIB_ERROR_TIMEOUT: 
-		Serial.println("Time out error"); 
+		Serial.println("DHT Time out error");
 		break;
     case DHTLIB_OK:
 //		Serial.println("OK");
@@ -1354,7 +1378,7 @@ void RunDht11(byte Cmd) {
 		Serial.println((float)DHT11.temperature, 2);
 		break;
     default: 
-		Serial.println("Unknown error"); 
+		Serial.println("DHT Unknown error");
 		break;
   }
 #endif
@@ -1826,6 +1850,9 @@ void RecvMsg(bool loopback)
     if (pActInMsg->p.SrcNode > 127) {		//master message
     	if (!(pActInMsg->p.SrcNode - 128 == NodeId || pActInMsg->p.SrcNode == 0xFF))	//check target address or broadcast
     		return;
+    	if (pActInMsg->p.SrcNode == 0xFF)
+    		delay(NodeId * 2);						//delay handling of broadcast messages to prevent bus overload
+
     	if (pActInMsg->p.SrcModule == 1) {			//Receive config
     		ChangeConfigData();
     	}
@@ -1844,10 +1871,13 @@ void RecvMsg(bool loopback)
     	else if (pActInMsg->p.SrcModule == 6) {		//Load config
 			LoadConfigEE();
 		}
-    	else if (pActInMsg->p.SrcModule == 7) {		//Send node data - version TODO: add modules, etc
+    	else if (pActInMsg->p.SrcModule == 7) {		//Send node cfg data - version TODO: add modules, etc
 			Serial.println("TEST!");
 			tmp = version;
 			SendMsg(0,7,false,1,&tmp,2);
+		}
+    	else if (pActInMsg->p.SrcModule == 8) {		//Run cfg cmd
+    		RunCfgCmd();
 		}
     } else {                                         
        for (byte j = 0; j < CountLink; j++) {
@@ -2122,7 +2152,7 @@ void LoadConfigEE() {
 
 	Serial.println("LoadConfigEE1");
 
-	if (EEPROM.read(1021) != 1)			//read cfg from eeprom flag set?
+	if (EEPROM.read(CFG_READEEPROM) != 1)			//read cfg from eeprom flag set?
 		return;
 
 	Serial.println("LoadConfigEE2");

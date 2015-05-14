@@ -1,12 +1,14 @@
 //This is a automatic generated file
 //Please do not modify this file
 //If you touch this file your change will be overwritten during the next build
-//This file has been generated on 2015-05-11 00:22:00
+//This file has been generated on 2015-05-14 22:32:11
 
 #include "Arduino.h"
 #include "enums.h"
 #include <dht11.h>
 #include <eeprom.h>
+#include <SoftReset.h>
+#include <avr/wdt.h>
 #include <TimerOne.h>
 void setup() ;
 void loop() ;
@@ -22,6 +24,7 @@ void NewConfigData() ;
 void ChangeConfigData() ;
 void SendConfigData() ;
 byte* GetDataPtr(byte Type, byte pos, byte* wptr) ;
+void RunCfgCmd() ;
 void RunModuleCmd() ;
 void RunFan(byte Cmd) ;
 char getRPMS() ;

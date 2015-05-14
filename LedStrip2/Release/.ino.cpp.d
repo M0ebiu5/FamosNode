@@ -11,6 +11,7 @@
   C:\arduino-1.5.5-r2\hardware\arduino\avr\variants\standard/pins_arduino.h \
   ../enums.h C:\Texte\Dev\Arduino\libraries\DHT11/dht11.h \
   C:\Texte\Dev\Arduino\libraries\EEPROM/eeprom.h \
+  C:\Texte\Dev\Arduino\libraries\SoftReset/SoftReset.h \
   C:\Texte\Dev\Arduino\libraries\TimerOne/TimerOne.h ../LedStrip2.ino
 
 C:\arduino-1.5.5-r2\hardware\arduino\avr\cores\arduino/Arduino.h:
@@ -38,6 +39,8 @@ C:\arduino-1.5.5-r2\hardware\arduino\avr\variants\standard/pins_arduino.h:
 C:\Texte\Dev\Arduino\libraries\DHT11/dht11.h:
 
 C:\Texte\Dev\Arduino\libraries\EEPROM/eeprom.h:
+
+C:\Texte\Dev\Arduino\libraries\SoftReset/SoftReset.h:
 
 C:\Texte\Dev\Arduino\libraries\TimerOne/TimerOne.h:
 
